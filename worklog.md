@@ -524,3 +524,76 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M7 — Text:** full text editing (spec §18): content input, font family picker, font size, color, bold/italic, position/resize/rotate. M5 seeded text layers with defaults; M7 wires the editing UI. The TransformPanel already drives the transform; M7 adds a TextPanel for the text properties.
 - Optional polish to fold in alongside M7: drag-to-move the selected layer directly on the canvas (mouse drag updates X/Y per spec §19), and a layer thumbnail in the panel.
+
+---
+
+## Milestone 7 — Text (DONE)
+
+### Current project status (assessment)
+- **M1-M6:** done & stable (regression-verified again this round: zoom, fit, exclude, layer panel, draw panel, transform panel).
+- **M7 Text:** implemented & verified end-to-end this round.
+- **Stack unchanged.** No new deps. `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M7 scope (spec §18 Text):**
+
+1. **Store** (`src/store/editor-store.ts`): new text actions:
+   - `patchLayerText(windowId, layerId, patch: Partial<LayerText>)` — updates content/font/size/color/bold/italic on a text layer.
+   - `patchSelectedLayerText(patch)` — convenience for the selected window+layer.
+   - Added `EditorTool = 'text'`.
+
+2. **TextPanel** (`src/components/editor/TextPanel.tsx`, new): the `Text` panel (spec §18).
+   - **Content textarea** (multi-line).
+   - **Font family `<select>`** with 11 options (Inter, System Sans, Serif, Mono, Arial, Verdana, Tahoma, Trebuchet MS, Courier New, Impact, Comic Sans MS) — each option's label rendered in its own font.
+   - **Font size** numeric input (1–512, clamped).
+   - **Color picker** (native `<input type=color>` + hex text input, commit on blur).
+   - **Style toggles**: Bold / Italic / Normal (mutually-ish exclusive: Bold clears Italic and vice versa; Normal clears both). Active state sky-highlighted.
+   - **Preview** at the bottom renders the text in its actual font/size/color/style on a checkerboard.
+   - When the selected layer is NOT a text layer, shows a "Thêm text layer" quick button (delegates to M5 `addTextLayer`).
+   - Subscribes via `useShallow` (primitive fields only) to avoid re-render storms.
+   - Hint: "Text local trên layer đang chọn · vị trí/rotate qua Biến đổi" (position/rotation are owned by the M4 TransformPanel).
+
+3. **ImageWindow** (`src/components/editor/ImageWindow.tsx`): text layer rendering upgraded:
+   - **Proper text measurement** via `measureText(t)` (`src/lib/text-measure.ts`, new) using a cached canvas 2D context — width = `measureText().width` of the longest line, height = `fontSize × 1.4 × lineCount`. Replaces the M5 `content.length × fontSize × 0.55` approximation.
+   - Multi-line content via `whitespace-pre-wrap break-words`; empty content renders a single space so the bbox stays visible.
+
+4. **text-measure util** (`src/lib/text-measure.ts`, new): `measureText(LayerText)` returns `{width, height}` in document px. Uses a single cached `<canvas>` 2D context; handles bold/italic via the font string; measures the longest line for multi-line content.
+
+5. **Sidebar** (`src/components/editor/Sidebar.tsx`): new `Text` nav item (Type icon) after Sửa, toggle-active sky. Renders `<TextPanel/>` when `tool === 'text'`. Active tool hint box extended for text. Footer tag → "v0.1 · Milestone 7".
+
+6. **EditorShell** (`src/components/editor/EditorShell.tsx`): added `T` keyboard shortcut → Text tool.
+
+**Verification (agent-browser + VLM):**
+
+| Test | Result |
+|---|---|
+| Regression M1-M6 (import, MAIN, zoom, fit, exclude, layer panel, draw panel, transform panel) | ✅ |
+| Click Text → TextPanel renders "Layer đang chọn không phải text. Thêm text layer?" + button | ✅ |
+| Click "Thêm text layer" → TextPanel switches to full editor (content textarea, font combo, size, color, Bold/Italic/Normal) | ✅ VLM-confirmed |
+| Default text layer: content "Văn bản mới", Inter, 32px, white, Normal | ✅ VLM-confirmed |
+| Edit content → "Hello Zmi" via textarea | ✅ DOM: text="Hello Zmi" |
+| Change color → #4ade80 via color input | ✅ DOM: color=rgb(74,222,128) |
+| Change size → 48 via numeric input | ✅ DOM: fontSize=28.97px (48 × fit-scale) |
+| Click Bold → fontWeight=700 | ✅ DOM-confirmed |
+| VLM confirms green bold "Hello Zmi" on claude.png canvas + panel reflects edits | ✅ |
+| M6 regression: switch to Vẽ → DrawPanel renders | ✅ |
+| M5 regression: "2 layers" in panel | ✅ |
+| M4 regression: switch to Sửa → TransformPanel (Scale/Rotation/Flip) | ✅ |
+| M3 regression: zoom `+`→156%, `0`→fit | ✅ |
+| M2 regression: exclude gemini via `B` → `0 in batch · 1 excluded` | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Screenshots:** `tool-results/m7-textpanel.png`, `m7-text-edited.png`, `m7-final.png`.
+
+### Unresolved issues / risks
+- **Text is local-only** (spec §18 batch rule). A future "batch text" action can broadcast MAIN's text-layer properties via the M4 `batchTransformFromMain` pattern — not in M7 scope.
+- **No eyedropper** (spec §14 optional) — deferred.
+- **Text editing not yet inline on canvas** — content is edited via the sidebar textarea (matches the spec §18 suggested UI). Inline editing (double-click text on canvas → contenteditable) is a future polish.
+- **measureText uses canvas 2D** which is only available client-side; SSR returns a fallback (the util is only called inside ImageWindow which is `'use client'`). Fine.
+- **Per-layer dimension cache for added image layers** still deferred (M5 note).
+
+### Priority recommendations for next phase
+- **M8 — Delete / Crop:** delete elements (spec §15) with batch-aware confirmation (§33), and crop (spec §16 — distinguish Crop vs Cut, label `Cắt ảnh`). This is the first milestone that destroys document state, so it pairs naturally with a first pass at M9 (history) to make deletion undoable. Could fold M9 history in alongside M8.
+- Optional polish: inline text editing (double-click text on canvas), drag-to-move layers on canvas (§19).

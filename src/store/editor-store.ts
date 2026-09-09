@@ -135,6 +135,18 @@ interface EditorState {
   extendStroke: (windowId: string, layerId: string, strokeId: string, point: { x: number; y: number }) => void
   /** Remove the last stroke from a layer (local undo for the current gesture; M9 will wire full history). */
   undoLastStroke: (windowId: string, layerId: string) => void
+
+  // ---- M7: Text (spec §18) — document state on text layers ----
+  /** Patch the text properties of a text layer (content/font/size/color/bold/italic). */
+  patchLayerText: (
+    windowId: string,
+    layerId: string,
+    patch: Partial<import('@/lib/editor-types').LayerText>,
+  ) => void
+  /** Convenience: patch the text of the selected layer in the selected window. */
+  patchSelectedLayerText: (
+    patch: Partial<import('@/lib/editor-types').LayerText>,
+  ) => void
 }
 
 /** Initial offset for the first imported window (relative to workspace origin). */
@@ -712,6 +724,31 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : w,
       ),
     }))
+  },
+
+  patchLayerText: (windowId, layerId, patch) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === windowId
+          ? {
+              ...w,
+              layers: w.layers.map((l) => {
+                if (l.id !== layerId) return l
+                if (l.type !== 'text' || !l.text) return l
+                return { ...l, text: { ...l.text, ...patch } }
+              }),
+            }
+          : w,
+      ),
+    }))
+  },
+
+  patchSelectedLayerText: (patch) => {
+    const sel = get().selectedWindowId
+    if (!sel) return
+    const w = get().windows.find((x) => x.id === sel)
+    if (!w || !w.selectedLayerId) return
+    get().patchLayerText(sel, w.selectedLayerId, patch)
   },
 }))
 

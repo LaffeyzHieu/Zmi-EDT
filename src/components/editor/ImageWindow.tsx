@@ -30,6 +30,7 @@ import {
   wheelToZoomFactor,
   formatZoom,
 } from '@/lib/canvas-viewport'
+import { measureText } from '@/lib/text-measure'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -662,14 +663,13 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
               win.isSelected && layer.id === win.selectedLayerId
 
             if (layer.type === 'text' && layer.text) {
-              // Text layer: size by content (approx via fontSize). We give the
-              // box a width based on content length × fontSize, height = fontSize × 1.4.
+              // Text layer: measure content via canvas 2D for accurate width
+              // (spec §18 proper text sizing). Height = fontSize × 1.4 × lines.
               const t = layer.text
-              const approxW = Math.max(40, t.content.length * t.fontSize * 0.55)
-              const approxH = t.fontSize * 1.4
+              const m = measureText(t)
               const place = computeLayerPlacement(
-                approxW,
-                approxH,
+                m.width,
+                m.height,
                 layer.transform,
                 viewport,
               )
@@ -689,7 +689,7 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
                   }}
                 >
                   <div
-                    className="absolute inset-0 flex items-start justify-start whitespace-pre"
+                    className="absolute inset-0 flex items-start justify-start whitespace-pre-wrap break-words"
                     style={{
                       fontFamily: t.fontFamily,
                       fontSize: `${t.fontSize * viewport.scale * layer.transform.scale}px`,
@@ -697,10 +697,10 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
                       fontWeight: t.bold ? 700 : 400,
                       fontStyle: t.italic ? 'italic' : 'normal',
                       lineHeight: 1.2,
-                      textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                      textShadow: '0 1px 2px rgba(0,0,0,0.7)',
                     }}
                   >
-                    {t.content}
+                    {t.content || ' '}
                   </div>
                   {isSelectedLayer && (
                     <div

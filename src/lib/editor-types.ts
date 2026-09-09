@@ -169,8 +169,8 @@ export const MAX_ZOOM = 32
 /** When `zoom` (or fit-scale) exceeds this, the pixel grid auto-appears (§21). */
 export const GRID_AUTO_THRESHOLD = 8
 
-/** The active sidebar tool (spec §10 Di chuyển, §11 Xem, §12 Sửa→Biến đổi, §13 Vẽ). UI state. */
-export type EditorTool = 'move' | 'view' | 'transform' | 'draw'
+/** The active sidebar tool (spec §10 Di chuyển, §11 Xem, §12 Sửa→Biến đổi, §13 Vẽ, §18 Text). UI state. */
+export type EditorTool = 'move' | 'view' | 'transform' | 'draw' | 'text'
 
 /** Default transform for a freshly imported image layer. */
 export function defaultTransform(): LayerTransform {

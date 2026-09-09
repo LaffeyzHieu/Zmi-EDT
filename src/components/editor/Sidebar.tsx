@@ -17,12 +17,14 @@ import {
   Undo2,
   Redo2,
   Plus,
+  Type,
 } from 'lucide-react'
 import { useEditorStore } from '@/store/editor-store'
 import { cn } from '@/lib/utils'
 import { TransformPanel } from './TransformPanel'
 import { LayerPanel } from './LayerPanel'
 import { DrawPanel } from './DrawPanel'
+import { TextPanel } from './TextPanel'
 
 /**
  * Sidebar — black navigation panel (matches the `ZmiEDT (1).png` mockup).
@@ -160,7 +162,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Active tool hint (spec §10/§11/§19/§13) */}
+      {/* Active tool hint (spec §10/§11/§19/§13/§18) */}
       <div className="px-3 pt-2">
         <div
           className={cn(
@@ -171,7 +173,9 @@ export function Sidebar() {
                 ? 'border-amber-400/40 bg-amber-400/10 text-amber-200'
                 : tool === 'draw'
                   ? 'border-rose-400/40 bg-rose-400/10 text-rose-200'
-                  : 'border-white/10 bg-white/[0.03] text-white/55',
+                  : tool === 'text'
+                    ? 'border-sky-400/40 bg-sky-400/10 text-sky-200'
+                    : 'border-white/10 bg-white/[0.03] text-white/55',
           )}
         >
           <div className="flex items-center gap-1.5">
@@ -181,6 +185,8 @@ export function Sidebar() {
               <PencilLine className="h-3 w-3 text-amber-300" />
             ) : tool === 'draw' ? (
               <Brush className="h-3 w-3 text-rose-300" />
+            ) : tool === 'text' ? (
+              <Type className="h-3 w-3 text-sky-300" />
             ) : (
               <Move className="h-3 w-3 text-white/55" />
             )}
@@ -191,7 +197,9 @@ export function Sidebar() {
                   ? 'Biến đổi'
                   : tool === 'draw'
                     ? 'Vẽ'
-                    : 'Di chuyển'}
+                    : tool === 'text'
+                      ? 'Text'
+                      : 'Di chuyển'}
             </span>
           </div>
           <div className="mt-0.5 leading-relaxed text-white/50">
@@ -201,7 +209,9 @@ export function Sidebar() {
                 ? 'Sửa layer đã chọn. MAIN → Áp dụng batch.'
                 : tool === 'draw'
                   ? 'Kéo trên ảnh để vẽ nét. Local — không batch.'
-                  : 'Kéo title bar để di chuyển window.'}
+                  : tool === 'text'
+                    ? 'Chỉnh text layer. Vị trí/rotate qua Biến đổi.'
+                    : 'Kéo title bar để di chuyển window.'}
           </div>
         </div>
       </div>
@@ -248,10 +258,19 @@ export function Sidebar() {
             active={tool === 'transform'}
             onClick={() => setTool('transform')}
           />
+          <NavItem
+            icon={<Type className="h-4 w-4" />}
+            label="Text"
+            active={tool === 'text'}
+            onClick={() => setTool('text')}
+          />
         </NavGroup>
 
         {/* M4: Biến đổi panel — only shown when the Sửa tool is active */}
         {tool === 'transform' && <TransformPanel />}
+
+        {/* M7: Text panel — only shown when the Text tool is active */}
+        {tool === 'text' && <TextPanel />}
 
         <Divider />
         <NavGroup>
@@ -321,10 +340,10 @@ export function Sidebar() {
           </button>
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          <span>v0.1 · Milestone 6</span>
+          <span>v0.1 · Milestone 7</span>
         </div>
         <div className="mt-0.5 text-center text-[9px] text-white/20">
-          phím tắt: M · B · V · D · E · P · L · 0 1 + - · G · F · R · [ ] · Esc
+          phím tắt: M · B · V · D · E · T · P · L · 0 1 + - · G · F · R · [ ] · Esc
         </div>
       </div>
     </aside>
