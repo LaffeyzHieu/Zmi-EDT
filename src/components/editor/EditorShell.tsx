@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { Sidebar } from './Sidebar'
 import { Workspace } from './Workspace'
 import { StatusBar } from './StatusBar'
+import { WaifuOverlay } from './WaifuOverlay'
 import { useEditorStore } from '@/store/editor-store'
 
 /**
@@ -19,6 +20,7 @@ import { useEditorStore } from '@/store/editor-store'
  * M9: History (undo/redo) via Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y.
  * M10: S (toggle Tải về / Export panel).
  * M11: A (toggle Xem file đã upload / Asset Library panel).
+ * M12: W (toggle Ngắm waifu viewing mode, spec §22). Esc also exits waifu.
  * All ignore focus inside input/textarea/select/contenteditable — EXCEPT
  * Ctrl+Z which is also allowed there (so undo works while editing a layer name).
  */
@@ -86,6 +88,9 @@ export function EditorShell() {
       } else if (k === 'a') {
         // Toggle the Asset Library panel via a window event the Sidebar subscribes to.
         window.dispatchEvent(new CustomEvent('zmi:toggle-assets'))
+      } else if (k === 'w') {
+        // Toggle Ngắm waifu viewing mode (spec §22).
+        s.toggleWaifuMode()
       } else if (k === '[') {
         s.setBrushSize(s.brushSize - 2)
       } else if (k === ']') {
@@ -113,7 +118,11 @@ export function EditorShell() {
           }
         }
       } else if (e.key === 'Escape') {
-        if (s.selectedWindowId) s.selectWindow(null)
+        if (s.waifuMode) {
+          s.toggleWaifuMode()
+        } else if (s.selectedWindowId) {
+          s.selectWindow(null)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -129,6 +138,8 @@ export function EditorShell() {
         </main>
         <StatusBar />
       </div>
+      {/* M12: Ngắm waifu overlay (spec §22) — renders above everything when active */}
+      <WaifuOverlay />
     </div>
   )
 }

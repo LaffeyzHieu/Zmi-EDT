@@ -113,6 +113,8 @@ export function Sidebar() {
   const canRedo = isMainSel ? mainRedoLen > 0 : winRedoLen > 0
   const undo = useEditorStore((s) => s.undo)
   const redo = useEditorStore((s) => s.redo)
+  const waifuMode = useEditorStore((s) => s.waifuMode)
+  const toggleWaifuMode = useEditorStore((s) => s.toggleWaifuMode)
 
   // Listen for the keyboard-shortcut events (L, S, A) dispatched by EditorShell.
   useEffect(() => {
@@ -362,7 +364,8 @@ export function Sidebar() {
             icon={<Sparkles className="h-4 w-4" />}
             label="Ngắm waifu"
             emoji="🫠"
-            soon
+            active={waifuMode}
+            onClick={() => toggleWaifuMode()}
           />
           <NavItem
             icon={<Crown className="h-4 w-4" />}
@@ -426,10 +429,10 @@ export function Sidebar() {
           </button>
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          <span>v0.1 · Milestone 11</span>
+          <span>v0.1 · Milestone 12</span>
         </div>
         <div className="mt-0.5 text-center text-[9px] text-white/20">
-          phím tắt: M · B · V · D · E · T · P · C · X · L · S · A · 0 1 + - · G · F · R · [ ] · Del · Ctrl+Z/Y · Esc
+          phím tắt: M · B · V · D · E · T · P · C · X · L · S · A · W · 0 1 + - · G · F · R · [ ] · Del · Ctrl+Z/Y · Esc
         </div>
       </div>
     </aside>

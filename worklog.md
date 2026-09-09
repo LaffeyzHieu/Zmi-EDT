@@ -871,3 +871,64 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M12 — Ngắm waifu** (spec §22): the viewing mode that hides editor UI/windows so the user can inspect artwork cleanly. Toggle must preserve selections, MAIN, batch state, edits. Simple + fun. This is the last feature milestone before M13 polish.
 - Optional polish: drag-from-library-to-workspace, asset preview modal, drag-to-move layers on canvas (§19), inline text editing.
+
+---
+
+## Milestone 12 — Ngắm waifu (DONE)
+
+### Current project status (assessment)
+- **M1-M11:** done & stable (regression-verified again this round: exclude, zoom).
+- **M12 Ngắm waifu:** implemented & verified end-to-end this round.
+- **Stack unchanged.** `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M12 scope (spec §22 Ngắm waifu):**
+
+1. **Store** (`src/store/editor-store.ts`): new UI state + action:
+   - `waifuMode: boolean` (default false). UI state only — not history (spec §22, §28).
+   - `toggleWaifuMode()` — pure toggle, no document mutation.
+
+2. **WaifuOverlay** (`src/components/editor/WaifuOverlay.tsx`, new): the viewing mode overlay (spec §22).
+   - Full-screen `fixed inset-0 z-[100000]` overlay covering sidebar + status bar + workspace + all window chrome.
+   - Pastel dark backdrop (rose-950/violet-950 gradient) for a clean aesthetic.
+   - **CompositedArtwork** sub-component renders the MAIN window's artwork (or selected/first if no MAIN) centered, max-contain: image layers (with transforms), text layers (font/size/color/style, sized via container query units), and strokes (SVG overlay, document coords). No title bar, no toolbar, no badges, no dimension badge.
+   - **Exit affordances** (3 ways): X button top-right (rose on hover), `W` key, `Esc` key — all wired.
+   - Bottom hint bar: "Ngắm waifu 🫠 · nhấn W hoặc Esc để thoát".
+   - Empty state if no windows: "Chưa có ảnh để ngắm. Hãy nhập ảnh trước."
+   - The overlay reads the store directly, so edits/transforms/text/strokes present before entering are reflected. On exit, all editor state (selections, MAIN, batch, edits, exclude state) is exactly preserved — waifuMode is a pure UI toggle.
+
+3. **Sidebar** (`src/components/editor/Sidebar.tsx`): "Ngắm waifu" nav item now a toggle (active state, no `soon` badge). Footer tag → "v0.1 · Milestone 12".
+
+4. **EditorShell** (`src/components/editor/EditorShell.tsx`):
+   - Renders `<WaifuOverlay/>` above everything.
+   - Added `W` keyboard shortcut → `toggleWaifuMode()`.
+   - `Esc` now exits waifu mode first (before falling back to deselect), so Esc works as an exit in waifu mode.
+   - WaifuOverlay also has its own capture-phase Esc/W listener for robustness.
+
+**Verification (agent-browser + VLM):**
+
+| Test | Result |
+|---|---|
+| Regression M1-M11 (import, MAIN, zoom, fit, exclude) | ✅ |
+| Click "Ngắm waifu" → full-screen overlay opens (z-100000, 1440×900), no sidebar/statusbar/window chrome visible | ✅ VLM-confirmed |
+| Overlay shows claude.png artwork centered on pastel dark backdrop + X exit button top-right + bottom hint "W hoặc Esc để thoát" | ✅ VLM-confirmed |
+| Exit via X button → overlay gone, state preserved (2 windows, MAIN claude) | ✅ |
+| Re-enter via `W` key → overlay present | ✅ |
+| Exit via `Esc` → overlay gone | ✅ |
+| M2 exclude state (1 excluded) preserved through waifu toggle enter+exit | ✅ spec §22 "must not reset selections, MAIN, batch state, or edits" |
+| M3 zoom regression (`+`/`0`) | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Screenshots:** `tool-results/m12-waifu-open.png`, `m12-final.png`.
+
+### Unresolved issues / risks
+- **Overlay artwork sizing** uses CSS `aspect-ratio` + `max-width`/`max-height` for contain. For very unusual aspect ratios the container math may be slightly off, but it's visually centered + contained. Acceptable for v0.1.
+- **Text layers in overlay** use `cqw` (container query width) units for font-size scaling, which requires `container-type: inline-size` on the text div. Supported in all modern browsers. The sizing approximates the document-coord font size relative to natural width — may not be pixel-perfect vs the editor view, but visually consistent.
+- **No pan/zoom inside waifu mode** — the overlay is a clean static preview. The spec §22 says "inspect artwork cleanly"; pan/zoom inside waifu is a possible polish but not required (the editor's `Xem` mode already provides zoom/pan).
+- **State preservation is automatic** because `waifuMode` is a pure UI boolean — the editor's document state (`windows`, `mainId`, `selectedWindowId`, history) is untouched by the toggle. No snapshot/restore needed.
+
+### Priority recommendations for next phase
+- **M13 — Polish** (spec §13.6): keyboard shortcuts (mostly done), grid (done), empty states (done), error messages (done), performance improvements, responsive layout, accessibility improvements. This is the final milestone — a cleanup/polish pass across the whole app.
+- Optional polish to fold in alongside M13: inline text editing, drag-to-move layers on canvas (§19), drag-from-library-to-workspace, visual history list panel.

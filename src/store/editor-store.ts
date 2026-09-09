@@ -214,6 +214,12 @@ interface EditorState {
   createWindowFromAsset: (assetId: string) => string | null
   /** Add an asset as a new image layer to an existing window (spec §4/§24 reuse). */
   addAssetAsLayer: (windowId: string, assetId: string) => string | null
+
+  // ---- M12: Ngắm waifu (spec §22) — viewing mode, UI state only ----
+  /** Whether waifu viewing mode is active (spec §22). UI state, not history. */
+  waifuMode: boolean
+  /** Toggle waifu viewing mode (spec §22). Does not alter document state. */
+  toggleWaifuMode: () => void
 }
 
 /** Initial offset for the first imported window (relative to workspace origin). */
@@ -316,6 +322,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
   mainRedo: [],
   // M11 asset library (spec §24)
   assets: [],
+  // M12 waifu viewing mode (spec §22) — UI state only
+  waifuMode: false,
 
   addImages: async (files) => {
     const list = Array.from(files)
@@ -1210,6 +1218,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
       asset.naturalHeight,
       asset.fileName,
     )
+  },
+
+  toggleWaifuMode: () => {
+    set((s) => ({ waifuMode: !s.waifuMode }))
   },
 }
 })
