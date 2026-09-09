@@ -1,0 +1,1522 @@
+     1→# Zmi EDT — Product & Engineering Specification
+     2→## Version 0.1 — Batch Image Editor
+     3→
+     4→> **Purpose:** This document is the source of truth for implementing Zmi EDT.
+     5→> Build incrementally. Do not attempt to implement every feature in one pass.
+     6→> After each milestone, run/build/test the application before moving on.
+     7→
+     8→---
+     9→
+    10→## 1. Product Goal
+    11→
+    12→Zmi EDT is a browser-based image editor designed around a specific workflow:
+    13→
+    14→- Import many images by drag & drop.
+    15→- Display each image as an independent floating editor window.
+    16→- Choose one window as **MAIN**.
+    17→- Editing MAIN can broadcast supported actions to all currently active batch windows.
+    18→- Any individual window can be edited independently.
+    19→- Windows can be temporarily excluded from batch operations without deleting them.
+    20→- Inspect the whole workspace or temporarily hide editor chrome with **Ngắm waifu** mode.
+    21→- Export one image, all images, or the active batch as individual PNG files or a ZIP.
+    22→
+    23→The product is **not** intended to become Photoshop. Prioritize reliability, predictable state, and the batch workflow.
+    24→
+    25→### Primary use case
+    26→
+    27→The user has many images with the same aspect ratio and wants to normalize/edit them together while retaining the ability to make per-image corrections.
+    28→
+    29→---
+    30→
+    31→# 2. Design Principles
+    32→
+    33→1. **Batch operations must be explicit and predictable.**
+    34→2. **Individual edits must never unexpectedly modify other windows.**
+    35→3. **MAIN is the source of batch actions.**
+    36→4. **Excluded windows remain in the workspace but do not receive MAIN batch actions.**
+    37→5. **Every meaningful edit must be undoable.**
+    38→6. **Do not destroy source data unnecessarily.**
+    39→7. **Do not add large features unless they support the core workflow.**
+    40→8. **Prefer deterministic pixel/coordinate behavior over clever automatic behavior.**
+    41→9. **Keep modules/components separated so one feature can be implemented without rewriting unrelated features.**
+    42→10. **The application must remain usable even when a later feature is unfinished.**
+    43→
+    44→---
+    45→
+    46→# 3. Workspace Model
+    47→
+    48→The application contains a workspace with zero or more image windows.
+    49→
+    50→Each window represents one imported image/document.
+    51→
+    52→A window has at least:
+    53→
+    54→```text
+    55→Window
+    56→- id: unique internal ID
+    57→- fileName
+    58→- sourceImage
+    59→- canvas/document state
+    60→- position: x, y (workspace coordinates)
+    61→- size: window width/height
+    62→- isMain: boolean
+    63→- isBatchEnabled: boolean
+    64→- isSelected: boolean
+    65→- layers
+    66→- history
+    67→```
+    68→
+    69→### Window lifecycle
+    70→
+    71→```text
+    72→Drag/drop image
+    73→    ↓
+    74→Create window
+    75→    ↓
+    76→Window becomes available in workspace
+    77→    ↓
+    78→User can:
+    79→    - move it
+    80→    - select it
+    81→    - exclude/include it in batch
+    82→    - make it MAIN
+    83→    - edit it
+    84→    - close/delete it
+    85→```
+    86→
+    87→Closing a window removes it from the current workspace. It should not silently delete the original uploaded asset from the uploaded-file library.
+    88→
+    89→---
+    90→
+    91→# 4. Import / Drag & Drop
+    92→
+    93→## Required behavior
+    94→
+    95→The user can drag supported image files into the application.
+    96→
+    97→There are two distinct import semantics:
+    98→
+    99→### Drop onto workspace
+   100→
+   101→- A supported image dropped onto an empty workspace is imported as a **new document/window**.
+   102→- Multiple files dropped at once create multiple windows.
+   103→
+   104→### Drop onto an existing window
+   105→
+   106→- A supported image dropped onto an existing window is imported as a **new image layer/element in that window**.
+   107→- It must NOT create another editor window.
+   108→- The target window should visibly indicate that it is the current drop target.
+   109→
+   110→The UI should also provide a `+` control on each window for adding an asset/layer without drag & drop. At minimum:
+   111→
+   112→```text
+   113→+
+   114→├── Import image as layer
+   115→├── Add text
+   116→└── Create empty layer
+   117→```
+   118→
+   119→Importing a layer is local by default, including when the target is MAIN. It does not automatically broadcast to the batch. If the user wants the new layer applied to the batch, that must be an explicit batch action.
+   120→
+   121→## Initial supported formats
+   122→
+   123→At minimum:
+   124→
+   125→- PNG
+   126→- JPG/JPEG
+   127→- WebP
+   128→
+   129→SVG can be added later if the rendering architecture supports it cleanly.
+   130→
+   131→## Same-ratio assumption
+   132→
+   133→The primary workflow assumes images use the same aspect ratio.
+   134→
+   135→The editor does not need to automatically normalize arbitrary aspect ratios in v0.1.
+   136→
+   137→If an image has a different ratio, warn the user rather than silently stretching it.
+   138→
+   139→## Important
+   140→
+   141→Never modify the original uploaded file merely because the user edits the canvas.
+   142→
+   143→The document should have its own editable state.
+   144→
+   145→---
+   146→
+   147→# 5. Window Controls
+   148→
+   149→Every image window has:
+   150→
+   151→- title / filename
+   152→- `_` control
+   153→- `X` control
+   154→
+   155→## `X` — Close window
+   156→
+   157→Removes the window from the workspace.
+   158→
+   159→If the window is not MAIN:
+   160→- close immediately or with a lightweight confirmation if unsaved changes are involved.
+   161→
+   162→If the window is MAIN:
+   163→- show a confirmation dialog.
+   164→
+   165→Suggested message:
+   166→
+   167→> Are you sure?
+   168→> This window is currently MAIN. Closing it will remove it from the batch workspace.
+   169→
+   170→After MAIN is removed:
+   171→- choose another eligible active window as MAIN automatically if possible.
+   172→- otherwise MAIN becomes null.
+   173→
+   174→Never leave the application in an invalid state.
+   175→
+   176→## `_` — Toggle batch participation
+   177→
+   178→This is NOT a normal minimize button.
+   179→
+   180→It means:
+   181→
+   182→> Toggle whether this window participates in MAIN batch operations.
+   183→
+   184→When excluded:
+   185→- keep the window visible.
+   186→- keep all its edits/state.
+   187→- do not delete it.
+   188→- do not apply future MAIN batch operations to it.
+   189→
+   190→The UI should visibly indicate excluded state.
+   191→
+   192→Example:
+   193→
+   194→```text
+   195→ACTIVE
+   196→Window participates in batch.
+   197→
+   198→EXCLUDED
+   199→Window remains open but does not participate in batch.
+   200→```
+   201→
+   202→---
+   203→
+   204→# 6. Selection
+   205→
+   206→There are two concepts:
+   207→
+   208→### Selected window
+   209→The window currently being inspected/edited.
+   210→
+   211→### MAIN window
+   212→The master window whose supported actions can be broadcast.
+   213→
+   214→They are not necessarily the same concept internally, although selecting MAIN may also select it.
+   215→
+   216→Only one window may be MAIN.
+   217→
+   218→Only one window should normally be the active editing target at a time.
+   219→
+   220→---
+   221→
+   222→# 7. MAIN
+   223→
+   224→MAIN is the core concept of the application.
+   225→
+   226→The MAIN window receives a strong visual indicator, such as a highlighted border and/or `MAIN` badge.
+   227→
+   228→Example:
+   229→
+   230→```text
+   231→┌─────────────────────────┐
+   232→│ ★ MAIN              _ X │
+   233→│                         │
+   234→│          image          │
+   235→│                         │
+   236→└─────────────────────────┘
+   237→```
+   238→
+   239→## Selecting MAIN
+   240→
+   241→The `Chọn MAIN` feature lets the user choose the current MAIN window.
+   242→
+   243→Selecting another window as MAIN:
+   244→- removes MAIN state from the previous window.
+   245→- adds MAIN state to the new window.
+   246→- updates the visual highlight.
+   247→- does not alter image content.
+   248→
+   249→## MAIN batch rule
+   250→
+   251→MAIN is the reference document for creating batch actions, but MAIN does **not** mean that every edit to the entire image is automatically copied.
+   252→
+   253→For a batchable operation, the user selects a specific layer/element as the target. The resulting action is then applied to the corresponding target in all batch-enabled windows.
+   254→
+   255→```text
+   256→MAIN
+   257→  ↓
+   258→select target layer/element
+   259→  ↓
+   260→perform batchable action
+   261→  ↓
+   262→create ONE batch action
+   263→  ↓
+   264→apply to corresponding target in all batch-enabled windows
+   265→```
+   266→
+   267→Example:
+   268→
+   269→```text
+   270→MAIN → select `Character` → Move X +3px, Y -1px
+   271→
+   272→A Character       +3, -1
+   273→B Character       +3, -1
+   274→C Character       +3, -1
+   275→D Character       +3, -1
+   276→E excluded        unchanged
+   277→```
+   278→
+   279→The batch target should therefore be explicit in the action model. Do not broadcast an ambiguous `Move` operation to an entire document unless the operation explicitly targets the canvas/document.
+   280→
+   281→Excluded windows do not receive the action.
+   282→
+   283→The MAIN itself is included.
+   284→
+   285→## Status indicator
+   286→
+   287→The workspace should show useful information such as:
+   288→
+   289→```text
+   290→6 windows · MAIN: claude.png · 5 in batch
+   291→```
+   292→
+   293→This is important because the user needs to know exactly how many documents will be affected.
+   294→
+   295→---
+   296→
+   297→# 8. Batch Semantics
+   298→
+   299→Not every action should automatically be batchable.
+   300→
+   301→Every action should declare whether it supports batch application.
+   302→
+   303→Suggested action categories:
+   304→
+   305→### Safe / naturally batchable
+   306→
+   307→- move selected layer/element
+   308→- scale selected layer/element
+   309→- rotate selected layer/element
+   310→- flip selected layer/element
+   311→- delete matching layer/element
+   312→- add text with identical parameters
+   313→- some layer operations
+   314→- some crop operations if explicitly confirmed
+   315→
+   316→### Batch target rule
+   317→
+   318→A batchable action should carry an explicit target, for example:
+   319→
+   320→```text
+   321→Action
+   322→├── type: MOVE
+   323→├── scope: BATCH
+   324→├── sourceWindowId: MAIN
+   325→├── targetType: LAYER
+   326→├── targetIdentity: Character
+   327→└── parameters: { x: +3, y: -1 }
+   328→```
+   329→
+   330→For v0.1, batch transforms operate on the **selected layer/element**, not the whole image by default.
+   331→
+   332→Target matching should use stable internal identity where possible. Layer name matching can be provided by Smart Batch as a more flexible matching strategy. If a corresponding target cannot be found, the application must not silently modify an unrelated layer.
+   333→
+   334→### Usually local-only
+   335→
+   336→- freehand drawing
+   337→- manual selection
+   338→- pixel-specific edits
+   339→- arbitrary brush strokes
+   340→
+   341→The UI must make batch behavior clear.
+   342→
+   343→A batch action should be represented as ONE logical history action, even though it affects many windows.
+   344→
+   345→Example:
+   346→
+   347→```text
+   348→MAIN:
+   349→Move +3px X
+   350→
+   351→History:
+   352→[BatchMove +3px]
+   353→
+   354→NOT:
+   355→
+   356→[Move window 1]
+   357→[Move window 2]
+   358→[Move window 3]
+   359→...
+   360→```
+   361→
+   362→This is essential for usable Undo.
+   363→
+   364→---
+   365→
+   366→# 9. Coordinate System
+   367→
+   368→The main editing workflow assumes equal aspect ratios.
+   369→
+   370→For transformations:
+   371→
+   372→- use absolute pixel values by default.
+   373→- do not silently convert a user-entered `+1px` into a percentage.
+   374→- maintain a clear document/canvas coordinate system.
+   375→
+   376→Example:
+   377→
+   378→```text
+   379→x = 120
+   380→y = 80
+   381→width = 512
+   382→height = 512
+   383→rotation = 0
+   384→```
+   385→
+   386→The UI should expose numeric values where precision matters.
+   387→
+   388→Pixel-perfect editing is an explicit product goal.
+   389→
+   390→---
+   391→
+   392→# 10. Sidebar — `Di chuyển`
+   393→
+   394→Purpose:
+   395→
+   396→> Move editor windows in the workspace.
+   397→
+   398→This mode affects the WINDOW, not the image contents.
+   399→
+   400→Behavior:
+   401→- drag window → window moves.
+   402→- image coordinates remain unchanged.
+   403→
+   404→This separation is mandatory.
+   405→
+   406→The user must be able to move a floating window without accidentally moving the artwork inside it.
+   407→
+   408→---
+   409→
+   410→# 11. Sidebar — `Xem`
+   411→
+   412→Read-only inspection mode.
+   413→
+   414→Behavior:
+   415→
+   416→- click a window → highlight it.
+   417→- zoom.
+   418→- pan.
+   419→- inspect artwork.
+   420→- no document modifications.
+   421→- no history entries are created.
+   422→
+   423→Useful controls:
+   424→
+   425→- Fit to window
+   426→- 100% zoom
+   427→- zoom in/out
+   428→- pan
+   429→
+   430→`Xem` should be safe for inspection.
+   431→
+   432→---
+   433→
+   434→# 12. Sidebar — `Sửa`
+   435→
+   436→`Sửa` opens a tool dropdown.
+   437→
+   438→Suggested structure:
+   439→
+   440→```text
+   441→Sửa
+   442→├── Vẽ
+   443→├── Xóa
+   444→├── Cắt
+   445→├── Text
+   446→└── Biến đổi
+   447→```
+   448→
+   449→Do not implement unrelated advanced image-processing features in v0.1.
+   450→
+   451→---
+   452→
+   453→# 13. `Vẽ`
+   454→
+   455→Freehand drawing.
+   456→
+   457→Required:
+   458→
+   459→- brush/freehand stroke
+   460→- brush size
+   461→- color
+   462→- drawing on the currently selected window/layer
+   463→- undo/redo
+   464→
+   465→Optional later:
+   466→
+   467→- opacity
+   468→- hardness
+   469→- eraser
+   470→- pressure sensitivity
+   471→
+   472→## Batch rule
+   473→
+   474→Freehand drawing should be local by default.
+   475→
+   476→Do not automatically broadcast arbitrary mouse/stylus coordinates to other images.
+   477→
+   478→If batch drawing is ever added, it must be an explicit action.
+   479→
+   480→---
+   481→
+   482→# 14. Color Picker
+   483→
+   484→Used by tools that need a color.
+   485→
+   486→At minimum:
+   487→
+   488→- color selection
+   489→- hex input if practical
+   490→- visual color preview
+   491→
+   492→The same color picker can be reused by:
+   493→- brush
+   494→- text
+   495→- future shape tools
+   496→
+   497→Optional later:
+   498→- eyedropper/sample color from canvas.
+   499→
+   500→---
+   501→
+   502→# 15. `Xóa`
+   503→
+   504→Delete the selected element/layer.
+   505→
+   506→Behavior:
+   507→
+   508→1. user selects an element.
+   509→2. presses delete or uses the tool.
+   510→3. element is removed.
+   511→4. operation creates an undo history entry.
+   512→
+   513→## Batch behavior
+   514→
+   515→If the element has a stable identity across documents, deletion can be batchable.
+   516→
+   517→If the element is arbitrary pixel content, do not assume matching structure across documents.
+   518→
+   519→## Smart Batch
+   520→
+   521→Smart Batch is an explicit matching mode for applying an action to semantically matching layers/elements across documents. It is especially useful when the same layer name exists in multiple images but internal layer IDs differ.
+   522→
+   523→Example:
+   524→
+   525→```text
+   526→Smart Batch
+   527→Apply to all matching layers: [ Background ]
+   528→Action: Delete
+   529→```
+   530→
+   531→Expected behavior:
+   532→
+   533→- find the `Background` layer in each eligible document.
+   534→- apply the requested action only to matching layers.
+   535→- do not rely on layer index/position alone.
+   536→- if a document has no match, leave it unchanged and report the missing target.
+   537→
+   538→Smart Batch must be an explicit user choice; normal batch editing remains target-based and predictable.
+   539→
+   540→## MAIN deletion
+   541→
+   542→If deleting an element from MAIN with batch enabled:
+   543→- if the action is batchable, warn that multiple images will be affected.
+   544→- require confirmation for destructive batch deletion if appropriate.
+   545→
+   546→Suggested dialog:
+   547→
+   548→> Are you sure?
+   549→> This action will affect 5 images.
+   550→
+   551→---
+   552→
+   553→# 16. `Cắt`
+   554→
+   555→The UI should distinguish:
+   556→
+   557→### Crop
+   558→Change the image/canvas bounds.
+   559→
+   560→### Cut
+   561→Remove an element and optionally place it on an internal clipboard.
+   562→
+   563→Do not overload `Ctrl+X` ambiguously.
+   564→
+   565→Recommended:
+   566→- label the tool `Cắt ảnh` if it means crop.
+   567→- use `Ctrl+X` only if the intended behavior is standard Cut.
+   568→
+   569→For v0.1, crop can be local by default.
+   570→
+   571→Batch crop should be explicit because it can change canvas dimensions.
+   572→
+   573→---
+   574→
+   575→# 17. `Xem lớp`
+   576→
+   577→Layer panel.
+   578→
+   579→Minimum layer functionality:
+   580→
+   581→- list all layers.
+   582→- select a layer.
+   583→- hide/show.
+   584→- reorder.
+   585→- rename.
+   586→- delete.
+   587→
+   588→Example:
+   589→
+   590→```text
+   591→Layers
+   592→──────────────
+   593→👤 Character
+   594→✦ Decoration
+   595→▣ Background
+   596→```
+   597→
+   598→Keep the layer model simple in v0.1.
+   599→
+   600→Do NOT implement:
+   601→- masks
+   602→- blend-mode systems
+   603→- adjustment layers
+   604→- complex grouping
+   605→unless needed later.
+   606→
+   607→---
+   608→
+   609→# 18. Text
+   610→
+   611→Text element support.
+   612→
+   613→Required properties:
+   614→
+   615→- content
+   616→- font family
+   617→- font size
+   618→- color
+   619→- normal
+   620→- bold
+   621→- italic
+   622→- position
+   623→- resize/scale
+   624→- rotation
+   625→
+   626→Suggested UI:
+   627→
+   628→```text
+   629→Text: [__________]
+   630→
+   631→Font: [Arial ▼]
+   632→Size: [24]
+   633→Color: [■]
+   634→
+   635→Style:
+   636→[Normal] [Bold] [Italic]
+   637→```
+   638→
+   639→Text is an editable layer/element, not permanently painted into pixels immediately.
+   640→
+   641→## Batch
+   642→
+   643→Adding/editing text from MAIN may be batchable when explicitly treated as a batch action.
+   644→
+   645→Do not make every text interaction automatically affect all images.
+   646→
+   647→---
+   648→
+   649→# 19. `Biến đổi`
+   650→
+   651→Core precision editing tool.
+   652→
+   653→Properties:
+   654→
+   655→- X
+   656→- Y
+   657→- Width
+   658→- Height
+   659→- Scale
+   660→- Rotation
+   661→- Flip horizontal
+   662→- Flip vertical
+   663→
+   664→Example:
+   665→
+   666→```text
+   667→X:        120
+   668→Y:         80
+   669→Width:    512
+   670→Height:   512
+   671→Rotation:   0°
+   672→```
+   673→
+   674→Mouse dragging should update these values.
+   675→
+   676→Numeric input should update the selected element precisely.
+   677→
+   678→Supported transforms should be represented as actions so they can participate in batch and history.
+   679→
+   680→---
+   681→
+   682→# 20. Zoom / Pan
+   683→
+   684→Needed in both inspection and editing.
+   685→
+   686→Suggested controls:
+   687→
+   688→- mouse wheel / trackpad → zoom
+   689→- space + drag → pan
+   690→- fit-to-window
+   691→- 100%
+   692→
+   693→Zoom/pan state should NOT create document history entries.
+   694→
+   695→---
+   696→
+   697→# 21. Grid / Pixel Precision
+   698→
+   699→Optional but recommended for v0.1.
+   700→
+   701→When zoomed in:
+   702→- display a grid/pixel grid.
+   703→- allow the user to see exact alignment.
+   704→
+   705→This is particularly useful for the project's icon-design use case.
+   706→
+   707→Grid visibility is a view state, not document history.
+   708→
+   709→---
+   710→
+   711→# 22. `Ngắm waifu` 🫠
+   712→
+   713→This is a viewing mode, not an editing tool.
+   714→
+   715→Purpose:
+   716→
+   717→> Hide editor UI/windows so the user can inspect the artwork cleanly.
+   718→
+   719→When enabled:
+   720→- hide editor windows and/or editing chrome.
+   721→- show a clean workspace/preview.
+   722→- do not alter document data.
+   723→- do not create history entries.
+   724→
+   725→Toggle again:
+   726→- restore the previous editor state.
+   727→
+   728→This feature must not reset selections, MAIN, batch state, or edits.
+   729→
+   730→---
+   731→
+   732→# 23. `Tải về`
+   733→
+   734→Export options:
+   735→
+   736→```text
+   737→Tải về
+   738→├── Window hiện tại
+   739→├── Tất cả window
+   740→└── Tất cả window đang batch
+   741→```
+   742→
+   743→Single image:
+   744→- download PNG.
+   745→
+   746→Multiple images:
+   747→- package into ZIP.
+   748→
+   749→Recommended ZIP filenames:
+   750→
+   751→```text
+   752→chatgpt.png
+   753→gemini.png
+   754→claude.png
+   755→playstore.png
+   756→camera.png
+   757→settings.png
+   758→```
+   759→
+   760→Preserve original filenames unless the user explicitly renames them.
+   761→
+   762→Avoid automatic names like:
+   763→
+   764→```text
+   765→image.png
+   766→image (1).png
+   767→image (2).png
+   768→```
+   769→
+   770→when meaningful source filenames exist.
+   771→
+   772→Export should not modify document state or create history entries.
+   773→
+   774→---
+   775→
+   776→# 24. Uploaded File Library
+   777→
+   778→`Xem file đã upload`
+   779→
+   780→Purpose:
+   781→
+   782→> Reuse uploaded assets without importing them again.
+   783→
+   784→Show:
+   785→- preview
+   786→- filename
+   787→- available files
+   788→
+   789→Actions:
+   790→- view
+   791→- reuse
+   792→- drag into workspace
+   793→- delete from library
+   794→
+   795→Important distinction:
+   796→
+   797→### Workspace window
+   798→An active editable document.
+   799→
+   800→### Uploaded asset
+   801→A reusable source file.
+   802→
+   803→Closing a window should not necessarily delete the asset.
+   804→
+   805→---
+   806→
+   807→# 25. Undo / Redo
+   808→
+   809→Both are required.
+   810→
+   811→## Individual edit
+   812→
+   813→If user edits a non-MAIN window locally:
+   814→
+   815→```text
+   816→Window 17 history:
+   817→A → B → C
+   818→
+   819→Undo
+   820→→ only Window 17 changes
+   821→```
+   822→
+   823→## MAIN batch edit
+   824→
+   825→If MAIN performs a batchable action:
+   826→
+   827→```text
+   828→MAIN action
+   829→    ↓
+   830→apply to 5 active windows
+   831→    ↓
+   832→one batch history entry
+   833→```
+   834→
+   835→Undo:
+   836→- revert the action on all affected windows.
+   837→
+   838→Redo:
+   839→- reapply the same logical batch action.
+   840→
+   841→## History isolation
+   842→
+   843→Use separate histories or a carefully scoped action system so local edits do not accidentally get undone by another window's local history.
+   844→
+   845→A good conceptual model:
+   846→
+   847→```text
+   848→mainHistory = [
+   849→    batchAction1,
+   850→    batchAction2
+   851→]
+   852→
+   853→windowHistory[id] = [
+   854→    localAction1,
+   855→    localAction2
+   856→]
+   857→```
+   858→
+   859→The exact implementation can differ, but observable behavior must follow this rule.
+   860→
+   861→---
+   862→
+   863→# 26. Action System
+   864→
+   865→All document modifications should ideally be represented by actions.
+   866→
+   867→Example:
+   868→
+   869→```text
+   870→Action {
+   871→    type,
+   872→    targetWindowIds,
+   873→    targetLayerId,
+   874→    before,
+   875→    after,
+   876→    batchId?,
+   877→    metadata?
+   878→}
+   879→```
+   880→
+   881→Possible action types:
+   882→
+   883→```text
+   884→MOVE
+   885→TRANSFORM
+   886→DRAW
+   887→DELETE
+   888→ADD_TEXT
+   889→EDIT_TEXT
+   890→CROP
+   891→LAYER_CREATE
+   892→LAYER_DELETE
+   893→LAYER_REORDER
+   894→LAYER_VISIBILITY
+   895→```
+   896→
+   897→An action should contain enough information to undo and redo deterministically.
+   898→
+   899→## Important
+   900→
+   901→View-only state should NOT be an edit action.
+   902→
+   903→Examples that should not enter document history:
+   904→
+   905→- zoom
+   906→- pan
+   907→- selecting a window
+   908→- selecting a layer
+   909→- changing workspace window position
+   910→- toggling Ngắm waifu
+   911→- opening/closing panels
+   912→
+   913→---
+   914→
+   915→# 27. Batch Action Architecture
+   916→
+   917→A batch action is one logical action with multiple targets.
+   918→
+   919→Conceptually:
+   920→
+   921→```text
+   922→BatchAction
+   923→- sourceWindowId = MAIN
+   924→- targetWindowIds = [1,2,3,4,5]
+   925→- action = TRANSFORM
+   926→- parameters = { x: +3, y: -1 }
+   927→```
+   928→
+   929→The engine applies the action to each eligible target.
+   930→
+   931→If a target cannot accept the action:
+   932→- do not corrupt the document.
+   933→- report/handle the failure deterministically.
+   934→- ideally skip unsupported targets while informing the user.
+   935→
+   936→Do not silently partially apply a destructive action.
+   937→
+   938→---
+   939→
+   940→# 28. UI State vs Document State
+   941→
+   942→Keep these separate.
+   943→
+   944→## UI state
+   945→
+   946→Examples:
+   947→- selected tool
+   948→- selected window
+   949→- MAIN ID
+   950→- batch enabled/disabled
+   951→- window position
+   952→- zoom
+   953→- pan
+   954→- sidebar state
+   955→- Ngắm waifu state
+   956→
+   957→## Document state
+   958→
+   959→Examples:
+   960→- pixels/elements
+   961→- layers
+   962→- text
+   963→- transforms
+   964→- canvas dimensions
+   965→
+   966→This separation prevents UI interactions from polluting Undo/Redo.
+   967→
+   968→---
+   969→
+   970→# 29. Suggested Component / Module Structure
+   971→
+   972→A possible React structure:
+   973→
+   974→```text
+   975→src/
+   976→├── app/
+   977→│   ├── App
+   978→│   └── routes/
+   979→│
+   980→├── workspace/
+   981→│   ├── Workspace
+   982→│   ├── ImageWindow
+   983→│   ├── WindowManager
+   984→│   └── WindowControls
+   985→│
+   986→├── canvas/
+   987→│   ├── EditorCanvas
+   988→│   ├── CanvasRenderer
+   989→│   └── CoordinateSystem
+   990→│
+   991→├── tools/
+   992→│   ├── ViewTool
+   993→│   ├── MoveTool
+   994→│   ├── DrawTool
+   995→│   ├── DeleteTool
+   996→│   ├── CropTool
+   997→│   ├── TextTool
+   998→│   └── TransformTool
+   999→│
+  1000→├── layers/
+  1001→│   ├── LayerPanel
+  1002→│   └── LayerManager
+  1003→│
+  1004→├── batch/
+  1005→│   ├── MainManager
+  1006→│   ├── BatchEngine
+  1007→│   └── BatchRules
+  1008→│
+  1009→├── history/
+  1010→│   ├── HistoryManager
+  1011→│   ├── Action
+  1012→│   └── UndoRedo
+  1013→│
+  1014→├── files/
+  1015→│   ├── Upload
+  1016→│   ├── AssetLibrary
+  1017→│   └── Export
+  1018→│
+  1019→└── ui/
+  1020→    ├── Sidebar
+  1021→    ├── Dialog
+  1022→    └── StatusBar
+  1023→```
+  1024→
+  1025→This is a guideline, not a requirement to create every file immediately.
+  1026→
+  1027→---
+  1028→
+  1029→# 30. Rendering Technology
+  1030→
+  1031→If using Konva.js:
+  1032→
+  1033→- use a stage/layer structure appropriate to each document.
+  1034→- keep editor interaction state outside the rendered artwork where possible.
+  1035→- avoid unnecessary React rerenders for high-frequency pointer movement.
+  1036→- clean up event listeners and Konva nodes when a window is removed.
+  1037→
+  1038→For draggable workspace windows, a library such as `react-rnd` may be used if it fits the project.
+  1039→
+  1040→Do not introduce a second window-management system unnecessarily.
+  1041→
+  1042→---
+  1043→
+  1044→# 31. Performance Rules
+  1045→
+  1046→The app may eventually contain dozens of windows.
+  1047→
+  1048→Therefore:
+  1049→
+  1050→- do not render huge duplicated image buffers unnecessarily.
+  1051→- avoid rerendering all windows for a local edit.
+  1052→- batch operations may update multiple documents, but UI updates should be controlled.
+  1053→- clean up object URLs when no longer needed.
+  1054→- avoid memory leaks from imported images.
+  1055→- do not keep unlimited full-resolution bitmap copies in history if avoidable.
+  1056→
+  1057→If history becomes memory-heavy, use action/state deltas rather than cloning entire images for every operation.
+  1058→
+  1059→For v0.1, correctness is more important than premature optimization.
+  1060→
+  1061→---
+  1062→
+  1063→# 32. Error Handling
+  1064→
+  1065→The app must fail gracefully.
+  1066→
+  1067→Examples:
+  1068→
+  1069→### Unsupported file
+  1070→
+  1071→Show:
+  1072→
+  1073→> Unsupported image format.
+  1074→
+  1075→Do not crash the whole workspace.
+  1076→
+  1077→### Corrupt image
+  1078→
+  1079→Show an import error for that file.
+  1080→
+  1081→Other imported images remain usable.
+  1082→
+  1083→### Failed export
+  1084→
+  1085→Show a clear error and allow retry.
+  1086→
+  1087→### Failed batch action
+  1088→
+  1089→Do not leave documents half-mutated.
+  1090→
+  1091→Prefer transactional behavior:
+  1092→
+  1093→```text
+  1094→validate
+  1095→→ apply
+  1096→→ commit
+  1097→
+  1098→if failure:
+  1099→→ rollback
+  1100→```
+  1101→
+  1102→For complex operations where full transactionality is expensive, ensure partial failure is clearly reported.
+  1103→
+  1104→---
+  1105→
+  1106→# 33. Confirmation Dialog Rules
+  1107→
+  1108→Do not spam confirmation dialogs for harmless operations.
+  1109→
+  1110→Require confirmation for destructive/high-impact actions such as:
+  1111→
+  1112→- deleting MAIN window
+  1113→- deleting many elements through a batch action
+  1114→- clearing many documents
+  1115→- destructive crop affecting many images
+  1116→
+  1117→Do not require confirmation for:
+  1118→
+  1119→- selecting MAIN
+  1120→- zooming
+  1121→- moving a workspace window
+  1122→- normal local edits with Undo available
+  1123→
+  1124→---
+  1125→
+  1126→# 34. Keyboard Shortcuts
+  1127→
+  1128→Recommended baseline:
+  1129→
+  1130→```text
+  1131→Ctrl + Z       Undo
+  1132→Ctrl + Y       Redo
+  1133→Ctrl + Shift + Z  Redo alternative
+  1134→Delete         Delete selected element
+  1135→Ctrl + D       Duplicate selected element
+  1136→Ctrl + X       Cut, only if Cut semantics are implemented
+  1137→Ctrl + S       Optional project save later
+  1138→```
+  1139→
+  1140→Do not assign a shortcut to a function if it conflicts with standard browser behavior unless the app has a clear reason.
+  1141→
+  1142→---
+  1143→
+  1144→# 35. Milestone-Based Development
+  1145→
+  1146→DO NOT implement the entire product in one AI coding request.
+  1147→
+  1148→Recommended sequence:
+  1149→
+  1150→## Milestone 1 — Workspace
+  1151→
+  1152→- React app
+  1153→- workspace
+  1154→- drag/drop image
+  1155→- create windows
+  1156→- move windows
+  1157→- close windows
+  1158→- select window
+  1159→
+  1160→## Milestone 2 — MAIN / Batch
+  1161→
+  1162→- MAIN selection
+  1163→- MAIN border/badge
+  1164→- batch enabled/excluded state
+  1165→- `_` behavior
+  1166→- status bar
+  1167→
+  1168→## Milestone 3 — Canvas / View
+  1169→
+  1170→- render image
+  1171→- zoom
+  1172→- pan
+  1173→- fit
+  1174→- read-only Xem mode
+  1175→
+  1176→## Milestone 4 — Transform
+  1177→
+  1178→- move image/element
+  1179→- scale
+  1180→- rotate
+  1181→- numeric values
+  1182→- batch transform from MAIN
+  1183→
+  1184→## Milestone 5 — Layers
+  1185→
+  1186→- layer list
+  1187→- select
+  1188→- hide/show
+  1189→- reorder
+  1190→- rename
+  1191→- delete
+  1192→
+  1193→## Milestone 6 — Draw / Color
+  1194→
+  1195→- brush
+  1196→- size
+  1197→- color
+  1198→- local drawing
+  1199→- undo
+  1200→
+  1201→## Milestone 7 — Text
+  1202→
+  1203→- add text
+  1204→- edit text
+  1205→- font
+  1206→- size
+  1207→- color
+  1208→- normal/bold/italic
+  1209→- transform text
+  1210→
+  1211→## Milestone 8 — Delete / Crop
+  1212→
+  1213→- delete elements
+  1214→- crop
+  1215→- confirmation for destructive batch operations
+  1216→
+  1217→## Milestone 9 — History
+  1218→
+  1219→- individual undo/redo
+  1220→- batch undo/redo
+  1221→- action-based history
+  1222→- verify mixed local + batch edits
+  1223→
+  1224→## Milestone 10 — Export
+  1225→
+  1226→- current image
+  1227→- all images
+  1228→- active batch
+  1229→- PNG
+  1230→- ZIP
+  1231→
+  1232→## Milestone 11 — Uploaded Asset Library
+  1233→
+  1234→- reusable uploaded files
+  1235→- drag from library
+  1236→- asset management
+  1237→
+  1238→## Milestone 12 — Ngắm waifu
+  1239→
+  1240→- clean viewing mode
+  1241→- preserve editor state
+  1242→
+  1243→## Milestone 13 — Polish
+  1244→
+  1245→- keyboard shortcuts
+  1246→- grid
+  1247→- empty states
+  1248→- error messages
+  1249→- performance improvements
+  1250→- responsive layout
+  1251→- accessibility improvements
+  1252→
+  1253→---
+  1254→
+  1255→# 36. Testing Strategy
+  1256→
+  1257→After each milestone, test manually before adding the next feature.
+  1258→
+  1259→## Minimum batch test
+  1260→
+  1261→Use 6 images.
+  1262→
+  1263→```text
+  1264→A MAIN
+  1265→B active
+  1266→C active
+  1267→D active
+  1268→E excluded
+  1269→F active
+  1270→```
+  1271→
+  1272→Perform:
+  1273→
+  1274→```text
+  1275→MAIN transform
+  1276→```
+  1277→
+  1278→Expected:
+  1279→
+  1280→```text
+  1281→A B C D F → changed
+  1282→E → unchanged
+  1283→```
+  1284→
+  1285→Then:
+  1286→
+  1287→```text
+  1288→local edit C
+  1289→```
+  1290→
+  1291→Expected:
+  1292→- C changes.
+  1293→- A/B/D/F unchanged.
+  1294→
+  1295→Then:
+  1296→
+  1297→```text
+  1298→MAIN another transform
+  1299→```
+  1300→
+  1301→Expected:
+  1302→- A/B/D/F receive it.
+  1303→- E remains excluded.
+  1304→- C receives the batch action too, while preserving its previous local edit where mathematically appropriate.
+  1305→
+  1306→---
+  1307→
+  1308→# 37. Critical Mixed-History Test
+  1309→
+  1310→This is one of the most important tests.
+  1311→
+  1312→Sequence:
+  1313→
+  1314→```text
+  1315→1. MAIN batch move +3px
+  1316→2. Local edit on window C
+  1317→3. MAIN batch scale 90%
+  1318→4. Undo MAIN scale
+  1319→5. Undo local C edit
+  1320→6. Undo MAIN move
+  1321→```
+  1322→
+  1323→Every step must affect exactly the intended scope.
+  1324→
+  1325→The final state should equal the original imported state.
+  1326→
+  1327→If this test fails, fix the history/action architecture before adding more tools.
+  1328→
+  1329→---
+  1330→
+  1331→# 38. Large Image / Performance Guardrails
+  1332→
+  1333→Zmi EDT may receive large images such as 4K assets. A compressed file size is not the same as decoded memory usage: an RGBA 3840×2160 image is roughly 31.6 MiB for one raw pixel buffer before additional canvas, layer, thumbnail, or history memory is considered.
+  1334→
+  1335→For v0.1:
+  1336→
+  1337→- do not duplicate full-resolution pixel buffers unnecessarily.
+  1338→- keep original uploaded files separate from editable document state.
+  1339→- revoke temporary object URLs when no longer needed.
+  1340→- avoid storing full bitmap copies for every history entry when a transform/action representation is sufficient.
+  1341→- warn or fail gracefully when imports exceed reasonable memory limits.
+  1342→- keep the architecture compatible with moving heavy image processing to `OffscreenCanvas`/Web Worker later.
+  1343→- do not block the UI with avoidable synchronous batch processing.
+  1344→
+  1345→Worker/offscreen processing is an optimization path, not a requirement to over-engineer the initial milestone.
+  1346→
+  1347→---
+  1348→
+  1349→# 38. Naming / Identity
+  1350→
+  1351→Every workspace document must have a stable internal ID.
+  1352→
+  1353→Do NOT use filename as the sole identity.
+  1354→
+  1355→Bad:
+  1356→
+  1357→```text
+  1358→window["claude.png"]
+  1359→```
+  1360→
+  1361→Better:
+  1362→
+  1363→```text
+  1364→windowId = "uuid-or-stable-generated-id"
+  1365→fileName = "claude.png"
+  1366→```
+  1367→
+  1368→Two files may have identical filenames.
+  1369→
+  1370→---
+  1371→
+  1372→# 39. Source of Truth
+  1373→
+  1374→The application should have a clear single source of truth for:
+  1375→
+  1376→- workspace windows
+  1377→- document state
+  1378→- MAIN ID
+  1379→- batch membership
+  1380→
+  1381→Avoid duplicating the same state across many components.
+  1382→
+  1383→If using a state manager, choose one approach and keep it consistent.
+  1384→
+  1385→Do not create multiple competing global stores.
+  1386→
+  1387→---
+  1388→
+  1389→# 40. AI Coding Instructions
+  1390→
+  1391→When asking an AI coding assistant to implement a milestone:
+  1392→
+  1393→1. State exactly ONE milestone.
+  1394→2. Tell it which existing modules it may modify.
+  1395→3. Tell it which features are explicitly out of scope.
+  1396→4. Require it to preserve existing functionality.
+  1397→5. Ask it to run/build/test after implementation.
+  1398→6. Ask for a concise summary of changed files and known issues.
+  1399→7. Commit the working state before the next milestone.
+  1400→
+  1401→Example:
+  1402→
+  1403→```text
+  1404→Implement Milestone 2 only.
+  1405→
+  1406→Add:
+  1407→- MAIN selection
+  1408→- MAIN visual indicator
+  1409→- batch enabled/excluded state
+  1410→- `_` toggle
+  1411→- status bar
+  1412→
+  1413→Do NOT implement:
+  1414→- drawing
+  1415→- text
+  1416→- layers
+  1417→- undo/redo
+  1418→- export
+  1419→
+  1420→Preserve Milestone 1 behavior.
+  1421→
+  1422→Run the build and fix errors before finishing.
+  1423→```
+  1424→
+  1425→This prevents the coding model from consuming its entire context/output budget attempting to build the whole application.
+  1426→
+  1427→---
+  1428→
+  1429→# 41. Definition of Done — v0.1
+  1430→
+  1431→Zmi EDT v0.1 is considered complete when the user can:
+  1432→
+  1433→1. Drag multiple images into the app.
+  1434→2. See each image as a separate window.
+  1435→3. Move windows without moving their image content.
+  1436→4. Select a window.
+  1437→5. Select a MAIN window.
+  1438→6. See which windows are included in batch.
+  1439→7. Exclude/re-include windows using `_`.
+  1440→8. Edit MAIN with supported batchable transformations.
+  1441→9. Edit an individual window locally.
+  1442→10. Use layers.
+  1443→11. Draw.
+  1444→12. Add/edit text.
+  1445→13. Delete elements.
+  1446→14. Crop when supported.
+  1447→15. Zoom and pan.
+  1448→16. Undo and redo both local and batch actions.
+  1449→17. Inspect all uploaded assets.
+  1450→18. Export one or many images.
+  1451→19. Export multiple images as ZIP.
+  1452→20. Enter and leave Ngắm waifu mode without losing editor state.
+  1453→
+  1454→Most importantly:
+  1455→
+  1456→> **The application must remain stable when the user mixes MAIN batch edits, excluded windows, local edits, undo/redo, window closing, and export.**
+  1457→
+  1458→---
+  1459→
+  1460→# 42. Explicit Non-Goals for v0.1
+  1461→
+  1462→Do NOT add unless separately requested:
+  1463→
+  1464→- user accounts
+  1465→- cloud collaboration
+  1466→- social features
+  1467→- AI image generation
+  1468→- AI image editing
+  1469→- filters
+  1470→- advanced color correction
+  1471→- masks
+  1472→- complex blend modes
+  1473→- animation timeline
+  1474→- video editing
+  1475→- 3D
+  1476→- real-time multiplayer
+  1477→- complicated plugin system
+  1478→- full Photoshop compatibility
+  1479→
+  1480→Zmi EDT is a focused batch artwork editor.
+  1481→
+  1482→---
+  1483→
+  1484→# 43. Final Implementation Philosophy
+  1485→
+  1486→The application should feel simple to use even if its internal state management is sophisticated.
+  1487→
+  1488→The ideal mental model is:
+  1489→
+  1490→```text
+  1491→                 MAIN 🐐
+  1492→                   │
+  1493→                   │ batch action
+  1494→                   ▼
+  1495→       ┌───────────┼───────────┐
+  1496→       ▼           ▼           ▼
+  1497→     IMG A       IMG B       IMG C
+  1498→     active      active      excluded
+  1499→       │           │
+  1500→       │           └── local edits allowed
+  1501→       │
+  1502→       └── local edits allowed
+  1503→```
+  1504→
+  1505→MAIN is not a permanently linked clone of every other document.
+  1506→
+  1507→It is the **source of supported batch actions**.
+  1508→
+  1509→Each document remains independently editable.
+  1510→
+  1511→That distinction is the foundation of Zmi EDT.
+  1512→
+  1513→---
+  1514→
+  1515→## End of specification
+  1516→
+  1517→Build small.
+  1518→Test often.
+  1519→Commit after every stable milestone.
+  1520→
+  1521→And do not let the coding assistant turn a 38-icon editor into Photoshop 2.0 before the first PNG can even be exported.
+  1522→
