@@ -76,15 +76,29 @@ function Divider() {
 export function Sidebar() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addImages = useEditorStore((s) => s.addImages)
+  const setMain = useEditorStore((s) => s.setMain)
+  const selectedId = useEditorStore((s) => s.selectedWindowId)
+  const mainId = useEditorStore((s) => s.mainId)
+  const mainWindow = useEditorStore((s) =>
+    s.windows.find((w) => w.id === s.mainId),
+  )
+  const hasWindows = useEditorStore((s) => s.windows.length > 0)
 
   const openPicker = () => fileInputRef.current?.click()
 
   const handlePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return
     await addImages(e.target.files)
-    // reset so the same file can be re-picked
     e.target.value = ''
   }
+
+  const handleChooseMain = () => {
+    if (!selectedId) return
+    if (selectedId === mainId) return
+    setMain(selectedId)
+  }
+
+  const mainActionActive = !!selectedId && selectedId === mainId
 
   return (
     <aside
@@ -101,6 +115,35 @@ export function Sidebar() {
           <div className="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-white/45">
             Batch Image Editor
           </div>
+        </div>
+      </div>
+
+      {/* MAIN indicator */}
+      <div className="px-3 pt-2">
+        <div
+          className={cn(
+            'rounded-md border px-2.5 py-1.5 text-[11px] transition-colors',
+            mainWindow
+              ? 'border-amber-400/40 bg-amber-400/10 text-amber-200'
+              : 'border-white/10 bg-white/[0.03] text-white/45',
+          )}
+        >
+          <div className="flex items-center gap-1.5">
+            <Crown
+              className={cn(
+                'h-3 w-3',
+                mainWindow ? 'text-amber-300' : 'text-white/30',
+              )}
+            />
+            <span className="font-semibold uppercase tracking-wide">
+              {mainWindow ? 'MAIN' : 'MAIN chưa chọn'}
+            </span>
+          </div>
+          {mainWindow && (
+            <div className="mt-0.5 truncate text-amber-100/80">
+              {mainWindow.fileName}
+            </div>
+          )}
         </div>
       </div>
 
@@ -148,7 +191,12 @@ export function Sidebar() {
             emoji="🫠"
             soon
           />
-          <NavItem icon={<Crown className="h-4 w-4" />} label="Chọn MAIN" soon />
+          <NavItem
+            icon={<Crown className="h-4 w-4" />}
+            label="Chọn MAIN"
+            active={mainActionActive}
+            onClick={hasWindows ? handleChooseMain : undefined}
+          />
           <NavItem icon={<Download className="h-4 w-4" />} label="Tải về" soon />
           <NavItem
             icon={<FolderOpen className="h-4 w-4" />}
@@ -178,8 +226,11 @@ export function Sidebar() {
             Undo
           </button>
         </div>
-        <div className="mt-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          v0.1 · Milestone 1
+        <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
+          <span>v0.1 · Milestone 2</span>
+        </div>
+        <div className="mt-0.5 text-center text-[9px] text-white/20">
+          phím tắt: M · B · Esc
         </div>
       </div>
     </aside>

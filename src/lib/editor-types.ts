@@ -17,9 +17,14 @@ export const SUPPORTED_IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp']
 /**
  * A floating editor window in the workspace.
  *
- * NOTE — Milestone 1 subset:
- *   `layers`, `isMain`, `isBatchEnabled`, `history` are intentionally absent.
- *   They will be added in M2 (MAIN/batch) and M5 (layers) / M9 (history).
+ * Milestone 2 additions:
+ *   `isBatchEnabled` — per-window flag controlling whether this window
+ *   receives MAIN's batch actions (spec §5 `_` toggle, §7 batch rule).
+ *
+ *   `isMain` is NOT stored on the window — it lives in `store.mainId` to avoid
+ *   duplicating state across many windows (spec §39 single source of truth).
+ *
+ *   `layers`, `history` remain absent → M5 (layers) / M9 (history).
  */
 export interface ImageWindow {
   /** Stable internal ID (UUID). Never the filename. */
@@ -41,6 +46,8 @@ export interface ImageWindow {
   zIndex: number
   /** Whether this window is the active editing/inspection target. */
   isSelected: boolean
+  /** Whether this window participates in MAIN batch operations (spec §5). */
+  isBatchEnabled: boolean
   /** Unix ms of import — used for stable cascading placement. */
   importedAt: number
 }

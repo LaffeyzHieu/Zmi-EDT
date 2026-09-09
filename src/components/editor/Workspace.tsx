@@ -18,6 +18,7 @@ export function Workspace() {
   const workspaceRef = useRef<HTMLDivElement>(null)
   const windows = useEditorStore((s) => s.windows)
   const addImages = useEditorStore((s) => s.addImages)
+  const selectWindow = useEditorStore((s) => s.selectWindow)
   const { toast } = useToast()
   const [isDragOver, setIsDragOver] = useState(false)
 
@@ -74,26 +75,33 @@ export function Workspace() {
       aria-label="Workspace"
     >
       {/* Background — pastel waifu artwork (matches mockup). Falls back to a
-          gradient if the image asset is missing or fails to load. */}
+          gradient if the image asset is missing or fails to load. The whole
+          background stack is wrapped in a click-catcher so clicking empty
+          workspace deselects the active window (spec §6). */}
       <div
-        className="absolute inset-0 bg-gradient-to-br from-rose-200/50 via-violet-200/40 to-sky-200/45"
+        className="absolute inset-0"
         aria-hidden
-      />
-      <img
-        src="/waifu-bg.png"
-        alt=""
-        aria-hidden
-        className="absolute inset-0 h-full w-full object-cover opacity-45"
-        onError={(e) => {
-          // Hide the broken image so the gradient shows through.
-          ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+        onPointerDown={(e) => {
+          // Only deselect when the click lands on this background layer itself,
+          // not on a window above it. Windows stopPropagation on their own
+          // pointerdown so they never reach here.
+          if (e.target === e.currentTarget) selectWindow(null)
         }}
-      />
-      {/* Dark vignette so floating windows read clearly. */}
-      <div
-        className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(0,0,0,0.45)_100%)]"
-        aria-hidden
-      />
+      >
+        <div
+          className="pointer-events-none absolute inset-0 bg-gradient-to-br from-rose-200/50 via-violet-200/40 to-sky-200/45"
+        />
+        <img
+          src="/waifu-bg.png"
+          alt=""
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-45"
+          onError={(e) => {
+            ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+          }}
+        />
+        {/* Dark vignette so floating windows read clearly. */}
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(0,0,0,0.45)_100%)]" />
+      </div>
 
       {/* Drag-over highlight ring */}
       {isDragOver && (
@@ -129,7 +137,7 @@ export function Workspace() {
               />
             </label>
             <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/40">
-              Milestone 1 · Workspace
+              Milestone 2 · MAIN & Batch
             </p>
           </div>
         </div>
