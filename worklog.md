@@ -455,3 +455,72 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M6 — Draw:** freehand brush on the selected layer (spec §13). Will likely need a per-layer raster buffer (OffscreenCanvas or a `<canvas>`) since CSS-styled `<img>`/`<div>` can't hold brush strokes. This is the first milestone that touches pixel-level document state beyond transforms.
 - Optional polish to fold in alongside M6: drag-to-move the selected layer directly on the canvas (mouse drag updates X/Y per spec §19 "Mouse dragging should update these values"), and a layer thumbnail in the panel.
+
+---
+
+## Milestone 6 — Draw (DONE)
+
+### Current project status (assessment)
+- **M1-M5:** done & stable (regression-verified again this round: zoom, fit, transform edit, layer panel).
+- **M6 Draw:** implemented & verified end-to-end this round.
+- **Stack unchanged.** No new deps. `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M6 scope (spec §13 Vẽ, §14 Color Picker):**
+
+1. **Stroke model** (`src/lib/editor-types.ts`): added `BrushStroke` (id, color, size, points[]) stored in DOCUMENT coordinates (pre-viewport-scale) so it renders correctly at any zoom + survives layer transforms. `Layer.strokes?: BrushStroke[]` — strokes belong to a layer (image layers can be drawn on). Added `EditorTool = 'move'|'view'|'transform'|'draw'`.
+
+2. **Store** (`src/store/editor-store.ts`): new draw state + actions:
+   - `brushColor` (default `#ff3b6b`), `brushSize` (default 8, clamped [1,200]).
+   - `setBrushColor`, `setBrushSize`.
+   - `beginStroke(windowId, layerId, point)` → creates a stroke with current brush color/size + first point, returns strokeId.
+   - `extendStroke(windowId, layerId, strokeId, point)` → appends a point.
+   - `undoLastStroke(windowId, layerId)` → removes the last stroke (local undo for the current gesture; M9 wires full history).
+   - Drawing is LOCAL by default (spec §13 batch rule — no batch brush in v0.1).
+
+3. **DrawPanel** (`src/components/editor/DrawPanel.tsx`, new): the `Vẽ` panel (spec §13 + §14).
+   - Color picker: native `<input type=color>` swatch + hex text input (commit on blur/Enter, reset on Esc) + 10 quick swatches.
+   - Brush size: range slider (1–100) + numeric input (1–200).
+   - Round brush preview circle (sized to brushSize, colored to brushColor) on a checkerboard.
+   - "Hoàn tác nét vẽ" button (disabled when no strokes) → calls `undoLastStroke`.
+   - Stroke count badge ("N nét").
+   - Hint: "Vẽ local trên layer đang chọn · không phát batch (§13)".
+
+4. **ImageWindow** (`src/components/editor/ImageWindow.tsx`):
+   - **Draw pointer handling:** when `tool === 'draw'`, body pointer-down begins a stroke on the selected layer (converts screen px → document px via `(px - vp.offsetX) / vp.scale - layer.transform.x`); pointer-move extends it; pointer-up ends it. `activeStrokeRef` (ref) tracks the in-progress stroke id to avoid re-renders during the gesture.
+   - **Stroke rendering:** each image layer now renders an `<svg viewBox="0 0 naturalW naturalH" preserveAspectRatio="none">` overlay; each stroke is a `<path d="M... L...">` with `stroke=color`, `strokeWidth=size*2`, round caps/joins; single-point strokes render as a `<circle>` (dot). The SVG lives inside the layer's transformed div, so strokes rotate/scale/flip with the layer (spec §9 coordinate system).
+   - Cursor: `crosshair` when draw tool active.
+
+5. **Sidebar** (`src/components/editor/Sidebar.tsx`): `Vẽ` nav item now a toggle (active state highlighted rose). Renders `<DrawPanel/>` when `tool === 'draw'`. Active tool hint box updated for draw (rose). Footer tag → "v0.1 · Milestone 6".
+
+6. **EditorShell** (`src/components/editor/EditorShell.tsx`): added M6 keyboard shortcuts: `P` (Vẽ tool), `[` (brush smaller by 2), `]` (brush larger by 2), `Ctrl/Cmd+Z` (undo last stroke — also allowed while focus is in a text field, unlike other shortcuts).
+
+**Verification (agent-browser + VLM):**
+
+| Test | Result |
+|---|---|
+| Regression M1-M5 (import, MAIN, zoom, fit, transform edit, layer panel) | ✅ |
+| Switch to Vẽ → DrawPanel renders (color swatch #ff3b6b, hex input, 10 swatches, size slider, brush preview, undo btn) | ✅ VLM-confirmed |
+| Draw stroke on claude via synthetic pointer (down/move×3/up) → "1 nét", stroke path `M90,133 L157,166 L223,149 L289,182` on claude only | ✅ |
+| Stroke is LOCAL — gemini has NO stroke path (spec §13 batch rule) | ✅ |
+| VLM confirms pink stroke visible on claude.png, not on gemini.png | ✅ |
+| Undo via Ctrl+Z → "0 nét", stroke path gone | ✅ |
+| Change color to green (#4ade80) via swatch + size to 20 via `]` → redraw → stroke is green | ✅ |
+| M4 regression: switch to Sửa → Rotation=25 → image rotate(25deg), stroke survives transform (renders inside transformed layer div) | ✅ |
+| M3 regression: zoom `+`→156%, `0`→fit | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Screenshots:** `tool-results/m6-drawpanel.png`, `m6-stroke-drawn.png`, `m6-final.png`.
+
+### Unresolved issues / risks
+- **Strokes are vector (SVG), not raster.** This is intentional for v0.1: it makes strokes trivially undoable (just drop the path) and zoom-independent. The spec §13 mentions "brush/freehand stroke" without mandating raster. M9 (history) + M10 (export) will need to rasterize strokes onto the exported PNG (the SVG overlay won't be captured by a `<canvas>.drawImage(img)` export path — M10 will composite strokes onto the canvas).
+- **No opacity/hardness/eraser/pressure** (spec §13 "optional later") — deferred.
+- **No batch drawing** (spec §13 "If batch drawing is ever added, it must be an explicit action") — not in v0.1 scope.
+- **agent-browser** cannot draw via real mouse drag (pointer-capture quirk); verified via direct `PointerEvent` dispatch. Real mouse will work.
+- **Per-layer dimension cache for added image layers** still deferred (M5 note) — strokes on added image layers render against the window's natural size, same as the image itself.
+
+### Priority recommendations for next phase
+- **M7 — Text:** full text editing (spec §18): content input, font family picker, font size, color, bold/italic, position/resize/rotate. M5 seeded text layers with defaults; M7 wires the editing UI. The TransformPanel already drives the transform; M7 adds a TextPanel for the text properties.
+- Optional polish to fold in alongside M7: drag-to-move the selected layer directly on the canvas (mouse drag updates X/Y per spec §19), and a layer thumbnail in the panel.

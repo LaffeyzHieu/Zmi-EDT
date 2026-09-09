@@ -64,6 +64,11 @@ export interface Layer {
    * has more than one layer type to demonstrate.
    */
   text?: LayerText
+  /**
+   * Freehand brush strokes drawn on this layer (spec §13). Stored in document
+   * coordinates so they render correctly at any zoom. M6 wires the Draw tool.
+   */
+  strokes?: BrushStroke[]
 }
 
 /** Text layer properties (spec §18). */
@@ -74,6 +79,25 @@ export interface LayerText {
   color: string // hex
   bold: boolean
   italic: boolean
+}
+
+/**
+ * A single freehand brush stroke (spec §13). Stored in DOCUMENT coordinates
+ * (pre-viewport-scale) so it renders correctly at any zoom. Strokes belong to
+ * a layer; a layer can hold zero or more strokes (image layers can be drawn
+ * on; text layers can too in principle).
+ *
+ * Strokes are document state — they WILL participate in history (M9).
+ */
+export interface BrushStroke {
+  /** Stable stroke id. */
+  id: string
+  /** Hex color. */
+  color: string
+  /** Brush radius in document px (pre-scale). */
+  size: number
+  /** Ordered polyline points in document space (pre-viewport-scale). */
+  points: { x: number; y: number }[]
 }
 
 /** Document-space transform of a layer (spec §9, §19). */
@@ -145,8 +169,8 @@ export const MAX_ZOOM = 32
 /** When `zoom` (or fit-scale) exceeds this, the pixel grid auto-appears (§21). */
 export const GRID_AUTO_THRESHOLD = 8
 
-/** The active sidebar tool (spec §10 Di chuyển, §11 Xem, §12 Sửa→Biến đổi). UI state. */
-export type EditorTool = 'move' | 'view' | 'transform'
+/** The active sidebar tool (spec §10 Di chuyển, §11 Xem, §12 Sửa→Biến đổi, §13 Vẽ). UI state. */
+export type EditorTool = 'move' | 'view' | 'transform' | 'draw'
 
 /** Default transform for a freshly imported image layer. */
 export function defaultTransform(): LayerTransform {

@@ -8,6 +8,7 @@ import {
   type Layer,
   type LayerTransform,
   type EditorTool,
+  type BrushStroke,
   MIN_WINDOW_W,
   MIN_WINDOW_H,
   MAX_DISPLAY_W,
@@ -114,6 +115,26 @@ interface EditorState {
   deleteLayer: (windowId: string, layerId: string) => void
   /** Drop an image file onto an existing window → adds it as a layer (spec §4). */
   dropImageIntoWindow: (windowId: string, file: File) => Promise<boolean>
+
+  // ---- M6: Draw (spec §13) — document state, local-only by default (§13 batch rule) ----
+  /** Current brush color (hex). UI state shared across windows. */
+  brushColor: string
+  /** Current brush radius in document px. UI state. */
+  brushSize: number
+  /** Set the brush color. */
+  setBrushColor: (color: string) => void
+  /** Set the brush radius (clamped to [1, 200]). */
+  setBrushSize: (size: number) => void
+  /**
+   * Begin a new stroke on the selected layer of the given window. Returns the
+   * stroke id (so the caller can `extendStroke`/`endStroke`). The stroke starts
+   * with a single point. Local-only (spec §13 batch rule).
+   */
+  beginStroke: (windowId: string, layerId: string, point: { x: number; y: number }) => string
+  /** Append a point to the in-progress stroke. */
+  extendStroke: (windowId: string, layerId: string, strokeId: string, point: { x: number; y: number }) => void
+  /** Remove the last stroke from a layer (local undo for the current gesture; M9 will wire full history). */
+  undoLastStroke: (windowId: string, layerId: string) => void
 }
 
 /** Initial offset for the first imported window (relative to workspace origin). */
@@ -130,6 +151,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   zCounter: 10,
   placementCursor: { ...FIRST_OFFSET, n: 0 },
   tool: 'move',
+  // M6 draw defaults (spec §13: brush size + color)
+  brushColor: '#ff3b6b',
+  brushSize: 8,
 
   addImages: async (files) => {
     const list = Array.from(files)
@@ -611,6 +635,83 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       console.error('[Zmi EDT] drop-into-window failed for', file.name, err)
       return false
     }
+  },
+
+  setBrushColor: (color) => set({ brushColor: color }),
+  setBrushSize: (size) =>
+    set({ brushSize: Math.max(1, Math.min(200, Math.round(size))) }),
+
+  beginStroke: (windowId, layerId, point) => {
+    const strokeId = uuid()
+    const stroke: BrushStroke = {
+      id: strokeId,
+      color: get().brushColor,
+      size: get().brushSize,
+      points: [{ x: Math.round(point.x), y: Math.round(point.y) }],
+    }
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === windowId
+          ? {
+              ...w,
+              layers: w.layers.map((l) =>
+                l.id === layerId
+                  ? { ...l, strokes: [...(l.strokes ?? []), stroke] }
+                  : l,
+              ),
+            }
+          : w,
+      ),
+    }))
+    return strokeId
+  },
+
+  extendStroke: (windowId, layerId, strokeId, point) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === windowId
+          ? {
+              ...w,
+              layers: w.layers.map((l) => {
+                if (l.id !== layerId) return l
+                const strokes = l.strokes ?? []
+                return {
+                  ...l,
+                  strokes: strokes.map((st) =>
+                    st.id === strokeId
+                      ? {
+                          ...st,
+                          points: [
+                            ...st.points,
+                            { x: Math.round(point.x), y: Math.round(point.y) },
+                          ],
+                        }
+                      : st,
+                  ),
+                }
+              }),
+            }
+          : w,
+      ),
+    }))
+  },
+
+  undoLastStroke: (windowId, layerId) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === windowId
+          ? {
+              ...w,
+              layers: w.layers.map((l) => {
+                if (l.id !== layerId) return l
+                const strokes = l.strokes ?? []
+                if (strokes.length === 0) return l
+                return { ...l, strokes: strokes.slice(0, -1) }
+              }),
+            }
+          : w,
+      ),
+    }))
   },
 }))
 

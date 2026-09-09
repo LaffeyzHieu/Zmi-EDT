@@ -15,23 +15,35 @@ import { useEditorStore } from '@/store/editor-store'
  * M3: V (Xem), D (Di chuyển), 0 (fit), 1 (100%), +/= (zoom in), -/_ (zoom out), G (grid).
  * M4: E (Sửa/Biến đổi tool), F (flip X selected layer), R (rotate selected +15°).
  * M5: L (toggle Layers panel via a custom window event the Sidebar listens to).
- * All ignore focus inside input/textarea/select/contenteditable and modifier-held combos.
+ * M6: P (Vẽ tool), [ (brush smaller), ] (brush larger), Ctrl+Z (undo last stroke).
+ * All ignore focus inside input/textarea/select/contenteditable — EXCEPT
+ * Ctrl+Z which is also allowed there (so undo works while editing a layer name).
  */
 export function EditorShell() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
-      if (t) {
-        const tag = t.tagName
-        if (
-          tag === 'INPUT' ||
-          tag === 'TEXTAREA' ||
-          tag === 'SELECT' ||
-          t.isContentEditable
-        ) {
-          return
+      const inField =
+        !!t &&
+        (t.tagName === 'INPUT' ||
+          t.tagName === 'TEXTAREA' ||
+          t.tagName === 'SELECT' ||
+          t.isContentEditable)
+
+      // Ctrl/Cmd+Z → undo last stroke (spec §13 undo/redo, M9 wires full history).
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        const s = useEditorStore.getState()
+        const sel = s.selectedWindowId
+        if (sel) {
+          const w = s.windows.find((x) => x.id === sel)
+          if (w && w.selectedLayerId) {
+            s.undoLastStroke(sel, w.selectedLayerId)
+          }
         }
+        return
       }
+
+      if (inField) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
 
       const s = useEditorStore.getState()
@@ -48,9 +60,15 @@ export function EditorShell() {
         s.setTool('move')
       } else if (k === 'e') {
         s.setTool('transform')
+      } else if (k === 'p') {
+        s.setTool('draw')
       } else if (k === 'l') {
         // Toggle the Layers panel via a window event the Sidebar subscribes to.
         window.dispatchEvent(new CustomEvent('zmi:toggle-layers'))
+      } else if (k === '[') {
+        s.setBrushSize(s.brushSize - 2)
+      } else if (k === ']') {
+        s.setBrushSize(s.brushSize + 2)
       } else if (k === '0') {
         if (sel) s.fitWindow(sel)
       } else if (k === '1') {

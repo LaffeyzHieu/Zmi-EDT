@@ -99,15 +99,20 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
   const toggleWindowGrid = useEditorStore((s) => s.toggleWindowGrid)
   const resizeWindow = useEditorStore((s) => s.resizeWindow)
   const dropImageIntoWindow = useEditorStore((s) => s.dropImageIntoWindow)
+  const beginStroke = useEditorStore((s) => s.beginStroke)
+  const extendStroke = useEditorStore((s) => s.extendStroke)
 
   const isMain = mainId === id
   const isExcluded = win ? !win.isBatchEnabled && !isMain : false
   const isViewTool = tool === 'view'
+  const isDrawTool = tool === 'draw'
 
   const [mainDialogOpen, setMainDialogOpen] = useState(false)
   const [bodySize, setBodySize] = useState({ w: 0, h: 0 })
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [dropHover, setDropHover] = useState(false)
+  // In-progress stroke id (for drawing); kept in a ref to avoid re-renders.
+  const activeStrokeRef = useRef<string | null>(null)
 
   const bodyRef = useRef<HTMLDivElement>(null)
   const dragState = useRef<DragState | null>(null)
@@ -197,6 +202,8 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
 
   const endDrag = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     if (dragState.current) dragState.current = null
+    // End any in-progress draw stroke.
+    if (activeStrokeRef.current) activeStrokeRef.current = null
     try {
       e.currentTarget.releasePointerCapture(e.pointerId)
     } catch {
@@ -216,6 +223,27 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
       if (e.button !== 0) return
       const target = e.target as HTMLElement
       if (target.closest('[data-window-control]')) return
+
+      // DRAW tool: begin a stroke on the selected layer (spec §13). Local only.
+      if (isDrawTool && win.selectedLayerId && bodyRef.current) {
+        e.preventDefault()
+        if (!win.isSelected) selectWindow(id)
+        const rect = bodyRef.current.getBoundingClientRect()
+        const vp = computeViewport(win, rect.width, rect.height)
+        const px = e.clientX - rect.left
+        const py = e.clientY - rect.top
+        // Convert screen px → document px by dividing by vp.scale and
+        // subtracting the layer's transform offset.
+        const layer = win.layers.find((l) => l.id === win.selectedLayerId)
+        if (!layer) return
+        const docX = (px - vp.offsetX) / vp.scale - layer.transform.x
+        const docY = (py - vp.offsetY) / vp.scale - layer.transform.y
+        const strokeId = beginStroke(win.id, layer.id, { x: docX, y: docY })
+        activeStrokeRef.current = strokeId
+        e.currentTarget.setPointerCapture(e.pointerId)
+        return
+      }
+
       // Pan when: view tool active, OR space held (and not in fit mode — fit
       // ignores pan). In move tool without space, a body click just selects.
       const wantPan = isViewTool || (spaceHeld && !win.fitMode)
@@ -238,11 +266,31 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
       e.currentTarget.setPointerCapture(e.pointerId)
       if (!win.isSelected) selectWindow(id)
     },
-    [win, isViewTool, spaceHeld, selectWindow, id, resetWindowZoom100],
+    [win, isViewTool, isDrawTool, spaceHeld, selectWindow, id, resetWindowZoom100, beginStroke],
   )
 
   const onBodyPointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      // DRAW: extend the active stroke if one is in progress.
+      if (
+        isDrawTool &&
+        activeStrokeRef.current &&
+        win &&
+        win.selectedLayerId &&
+        bodyRef.current
+      ) {
+        const rect = bodyRef.current.getBoundingClientRect()
+        const vp = computeViewport(win, rect.width, rect.height)
+        const px = e.clientX - rect.left
+        const py = e.clientY - rect.top
+        const layer = win.layers.find((l) => l.id === win.selectedLayerId)
+        if (layer) {
+          const docX = (px - vp.offsetX) / vp.scale - layer.transform.x
+          const docY = (py - vp.offsetY) / vp.scale - layer.transform.y
+          extendStroke(win.id, layer.id, activeStrokeRef.current, { x: docX, y: docY })
+        }
+        return
+      }
       const st = dragState.current
       if (!st || st.kind !== 'pan') return
       const dx = e.clientX - st.startX
@@ -259,7 +307,7 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
       st.origPanX = targetX
       st.origPanY = targetY
     },
-    [panWindowBy, id, win],
+    [panWindowBy, id, win, isDrawTool, extendStroke],
   )
 
   // ---- wheel zoom (anchored at cursor) ----
@@ -351,11 +399,13 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
       ? computeViewport(win, bodySize.w, bodySize.h)
       : null
   const gridOn = viewport ? shouldShowGrid(win, viewport) : false
-  const cursor = isViewTool
-    ? 'grab'
-    : spaceHeld
+  const cursor = isDrawTool
+    ? 'crosshair'
+    : isViewTool
       ? 'grab'
-      : 'default'
+      : spaceHeld
+        ? 'grab'
+        : 'default'
 
   const closeBtn = (
     <button
@@ -672,6 +722,7 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
             )
             const sx = place.flipX ? -1 : 1
             const sy = place.flipY ? -1 : 1
+            const strokes = layer.strokes ?? []
             return (
               <div
                 key={layer.id}
@@ -697,6 +748,49 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
                     imageRendering: viewport.scale * layer.transform.scale >= 8 ? 'pixelated' : 'auto',
                   }}
                 />
+                {/* Brush strokes overlay (spec §13). SVG sized to the layer's
+                    natural dims; stroke points are in document space. */}
+                {strokes.length > 0 && (
+                  <svg
+                    className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+                    viewBox={`0 0 ${win.naturalWidth} ${win.naturalHeight}`}
+                    preserveAspectRatio="none"
+                    aria-hidden
+                  >
+                    {strokes.map((s) => {
+                      if (s.points.length === 0) return null
+                      // Single-point stroke → render a filled circle (a dot).
+                      if (s.points.length === 1) {
+                        const p = s.points[0]
+                        return (
+                          <circle
+                            key={s.id}
+                            cx={p.x}
+                            cy={p.y}
+                            r={s.size}
+                            fill={s.color}
+                            opacity={0.95}
+                          />
+                        )
+                      }
+                      const d = s.points
+                        .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`)
+                        .join(' ')
+                      return (
+                        <path
+                          key={s.id}
+                          d={d}
+                          stroke={s.color}
+                          strokeWidth={s.size * 2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          fill="none"
+                          opacity={0.95}
+                        />
+                      )
+                    })}
+                  </svg>
+                )}
                 {isSelectedLayer && (
                   <div
                     className="pointer-events-none absolute inset-0 border-2 border-dashed border-sky-400/80"
