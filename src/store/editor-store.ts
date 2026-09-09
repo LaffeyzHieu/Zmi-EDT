@@ -147,6 +147,29 @@ interface EditorState {
   patchSelectedLayerText: (
     patch: Partial<import('@/lib/editor-types').LayerText>,
   ) => void
+
+  // ---- M8: Delete / Crop (spec §15 Xóa, §16 Cắt ảnh) ----
+  /**
+   * Delete the selected layer of the selected window. Refuses to delete the
+   * last remaining layer (spec §17). Returns true if deleted.
+   * (Use `batchDeleteFromMain` for batch-aware deletion from MAIN.)
+   */
+  deleteSelectedLayer: () => void
+  /**
+   * Batch delete from MAIN (spec §15 MAIN deletion + §33 confirmation).
+   * Deletes the layer with matching `targetIdentity` in MAIN + all batch-enabled
+   * windows. Returns the list of affected window ids.
+   */
+  batchDeleteFromMain: (targetIdentity: string) => string[]
+  /** Set the in-progress crop rect on a window (spec §16). Document px. */
+  setCropRect: (windowId: string, rect: { x: number; y: number; w: number; h: number } | null) => void
+  /**
+   * Commit the in-progress crop on a window (spec §16). Changes the document
+   * bounds (naturalWidth/Height) and shifts all layer transforms + stroke
+   * points + text positions by (-rect.x, -rect.y) so the cropped region
+   * becomes the new origin. Local by default (spec §16 batch crop is explicit).
+   */
+  applyCrop: (windowId: string) => void
 }
 
 /** Initial offset for the first imported window (relative to workspace origin). */
@@ -224,6 +247,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             } satisfies Layer,
           ],
           selectedLayerId: null,
+          // M8 crop in-progress rect (null = no crop being drawn)
+          cropRect: null,
           importedAt: Date.now(),
         }
         // default selection = the only layer
@@ -749,6 +774,88 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const w = get().windows.find((x) => x.id === sel)
     if (!w || !w.selectedLayerId) return
     get().patchLayerText(sel, w.selectedLayerId, patch)
+  },
+
+  deleteSelectedLayer: () => {
+    const sel = get().selectedWindowId
+    if (!sel) return
+    const w = get().windows.find((x) => x.id === sel)
+    if (!w || !w.selectedLayerId) return
+    get().deleteLayer(sel, w.selectedLayerId)
+  },
+
+  batchDeleteFromMain: (targetIdentity) => {
+    const mainId = get().mainId
+    if (!mainId) return []
+    const affected: string[] = []
+    set((s) => ({
+      windows: s.windows.map((w) => {
+        const eligible = w.id === mainId || w.isBatchEnabled
+        if (!eligible) return w
+        // Find layers with matching identity; delete ALL of them (usually 1).
+        const matches = w.layers.filter((l) => l.identity === targetIdentity)
+        if (matches.length === 0) return w
+        // Refuse if this would delete the last layer (spec §17 keeps ≥1).
+        if (matches.length >= w.layers.length) return w
+        affected.push(w.id)
+        const remaining = w.layers.filter((l) => l.identity !== targetIdentity)
+        const selectedLayerId =
+          w.selectedLayerId && matches.some((m) => m.id === w.selectedLayerId)
+            ? remaining[remaining.length - 1].id
+            : w.selectedLayerId
+        return { ...w, layers: remaining, selectedLayerId }
+      }),
+    }))
+    return affected
+  },
+
+  setCropRect: (windowId, rect) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === windowId ? { ...w, cropRect: rect } : w,
+      ),
+    }))
+  },
+
+  applyCrop: (windowId) => {
+    const w = get().windows.find((x) => x.id === windowId)
+    if (!w || !w.cropRect) return
+    const r = w.cropRect
+    // Clamp to document bounds.
+    const cx = Math.max(0, Math.min(w.naturalWidth, r.x))
+    const cy = Math.max(0, Math.min(w.naturalHeight, r.y))
+    const cw = Math.max(1, Math.min(w.naturalWidth - cx, r.w))
+    const ch = Math.max(1, Math.min(w.naturalHeight - cy, r.h))
+    set((s) => ({
+      windows: s.windows.map((win) => {
+        if (win.id !== windowId) return win
+        return {
+          ...win,
+          naturalWidth: Math.round(cw),
+          naturalHeight: Math.round(ch),
+          // Shift all layer transforms + stroke points + text positions by
+          // (-cx, -cy) so the cropped region becomes the new (0,0) origin.
+          layers: win.layers.map((l) => ({
+            ...l,
+            transform: {
+              ...l.transform,
+              x: l.transform.x - cx,
+              y: l.transform.y - cy,
+            },
+            strokes: l.strokes?.map((st) => ({
+              ...st,
+              points: st.points.map((p) => ({ x: p.x - cx, y: p.y - cy })),
+            })),
+          })),
+          // Reset crop + viewport so the new bounds fit cleanly.
+          cropRect: null,
+          fitMode: true,
+          zoom: 1,
+          panX: 0,
+          panY: 0,
+        }
+      }),
+    }))
   },
 }))
 

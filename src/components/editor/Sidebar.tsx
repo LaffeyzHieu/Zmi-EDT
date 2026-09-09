@@ -25,6 +25,8 @@ import { TransformPanel } from './TransformPanel'
 import { LayerPanel } from './LayerPanel'
 import { DrawPanel } from './DrawPanel'
 import { TextPanel } from './TextPanel'
+import { DeletePanel } from './DeletePanel'
+import { CropPanel } from './CropPanel'
 
 /**
  * Sidebar — black navigation panel (matches the `ZmiEDT (1).png` mockup).
@@ -162,7 +164,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Active tool hint (spec §10/§11/§19/§13/§18) */}
+      {/* Active tool hint (spec §10/§11/§19/§13/§18/§15/§16) */}
       <div className="px-3 pt-2">
         <div
           className={cn(
@@ -175,7 +177,11 @@ export function Sidebar() {
                   ? 'border-rose-400/40 bg-rose-400/10 text-rose-200'
                   : tool === 'text'
                     ? 'border-sky-400/40 bg-sky-400/10 text-sky-200'
-                    : 'border-white/10 bg-white/[0.03] text-white/55',
+                    : tool === 'crop'
+                      ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200'
+                      : tool === 'delete'
+                        ? 'border-rose-400/40 bg-rose-400/10 text-rose-200'
+                        : 'border-white/10 bg-white/[0.03] text-white/55',
           )}
         >
           <div className="flex items-center gap-1.5">
@@ -187,6 +193,10 @@ export function Sidebar() {
               <Brush className="h-3 w-3 text-rose-300" />
             ) : tool === 'text' ? (
               <Type className="h-3 w-3 text-sky-300" />
+            ) : tool === 'crop' ? (
+              <Scissors className="h-3 w-3 text-emerald-300" />
+            ) : tool === 'delete' ? (
+              <Trash2 className="h-3 w-3 text-rose-300" />
             ) : (
               <Move className="h-3 w-3 text-white/55" />
             )}
@@ -199,7 +209,11 @@ export function Sidebar() {
                     ? 'Vẽ'
                     : tool === 'text'
                       ? 'Text'
-                      : 'Di chuyển'}
+                      : tool === 'crop'
+                        ? 'Cắt ảnh'
+                        : tool === 'delete'
+                          ? 'Xóa'
+                          : 'Di chuyển'}
             </span>
           </div>
           <div className="mt-0.5 leading-relaxed text-white/50">
@@ -211,7 +225,11 @@ export function Sidebar() {
                   ? 'Kéo trên ảnh để vẽ nét. Local — không batch.'
                   : tool === 'text'
                     ? 'Chỉnh text layer. Vị trí/rotate qua Biến đổi.'
-                    : 'Kéo title bar để di chuyển window.'}
+                    : tool === 'crop'
+                      ? 'Kéo trên ảnh để chọn vùng cắt.'
+                      : tool === 'delete'
+                        ? 'Xóa layer đang chọn. MAIN → batch xóa.'
+                        : 'Kéo title bar để di chuyển window.'}
           </div>
         </div>
       </div>
@@ -280,8 +298,18 @@ export function Sidebar() {
             active={tool === 'draw'}
             onClick={() => setTool('draw')}
           />
-          <NavItem icon={<Trash2 className="h-4 w-4" />} label="Xóa" soon />
-          <NavItem icon={<Scissors className="h-4 w-4" />} label="Cắt" soon />
+          <NavItem
+            icon={<Trash2 className="h-4 w-4" />}
+            label="Xóa"
+            active={tool === 'delete'}
+            onClick={() => setTool('delete')}
+          />
+          <NavItem
+            icon={<Scissors className="h-4 w-4" />}
+            label="Cắt ảnh"
+            active={tool === 'crop'}
+            onClick={() => setTool('crop')}
+          />
           <NavItem
             icon={<Layers className="h-4 w-4" />}
             label="Xem lớp"
@@ -293,6 +321,10 @@ export function Sidebar() {
 
         {/* M6: Vẽ panel — only shown when the Vẽ tool is active */}
         {tool === 'draw' && <DrawPanel />}
+
+        {/* M8: Delete + Crop panels */}
+        {tool === 'delete' && <DeletePanel />}
+        {tool === 'crop' && <CropPanel />}
 
         {/* M5: Layers panel — toggle via the Xem lớp nav item */}
         {layersOpen && <LayerPanel />}
@@ -340,10 +372,10 @@ export function Sidebar() {
           </button>
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          <span>v0.1 · Milestone 7</span>
+          <span>v0.1 · Milestone 8</span>
         </div>
         <div className="mt-0.5 text-center text-[9px] text-white/20">
-          phím tắt: M · B · V · D · E · T · P · L · 0 1 + - · G · F · R · [ ] · Esc
+          phím tắt: M · B · V · D · E · T · P · C · X · L · 0 1 + - · G · F · R · [ ] · Del · Esc
         </div>
       </div>
     </aside>

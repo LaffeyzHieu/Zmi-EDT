@@ -29,6 +29,7 @@ import {
   shouldShowGrid,
   wheelToZoomFactor,
   formatZoom,
+  type Viewport,
 } from '@/lib/canvas-viewport'
 import { measureText } from '@/lib/text-measure'
 import {
@@ -102,11 +103,13 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
   const dropImageIntoWindow = useEditorStore((s) => s.dropImageIntoWindow)
   const beginStroke = useEditorStore((s) => s.beginStroke)
   const extendStroke = useEditorStore((s) => s.extendStroke)
+  const setCropRect = useEditorStore((s) => s.setCropRect)
 
   const isMain = mainId === id
   const isExcluded = win ? !win.isBatchEnabled && !isMain : false
   const isViewTool = tool === 'view'
   const isDrawTool = tool === 'draw'
+  const isCropTool = tool === 'crop'
 
   const [mainDialogOpen, setMainDialogOpen] = useState(false)
   const [bodySize, setBodySize] = useState({ w: 0, h: 0 })
@@ -117,6 +120,8 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
 
   const bodyRef = useRef<HTMLDivElement>(null)
   const dragState = useRef<DragState | null>(null)
+  // Crop drag: tracks the start document-coord point so we can compute the rect.
+  const cropDragRef = useRef<{ startX: number; startY: number } | null>(null)
 
   // Track Space key for pan mode (global), but only act on the selected window.
   useEffect(() => {
@@ -205,6 +210,8 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
     if (dragState.current) dragState.current = null
     // End any in-progress draw stroke.
     if (activeStrokeRef.current) activeStrokeRef.current = null
+    // End any in-progress crop drag (the rect stays until Apply/Cancel).
+    if (cropDragRef.current) cropDragRef.current = null
     try {
       e.currentTarget.releasePointerCapture(e.pointerId)
     } catch {
@@ -245,6 +252,22 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
         return
       }
 
+      // CROP tool: begin a crop rect drag (spec §16). Document coords.
+      if (isCropTool && bodyRef.current) {
+        e.preventDefault()
+        if (!win.isSelected) selectWindow(id)
+        const rect = bodyRef.current.getBoundingClientRect()
+        const vp = computeViewport(win, rect.width, rect.height)
+        const px = e.clientX - rect.left
+        const py = e.clientY - rect.top
+        const docX = (px - vp.offsetX) / vp.scale
+        const docY = (py - vp.offsetY) / vp.scale
+        cropDragRef.current = { startX: docX, startY: docY }
+        setCropRect(win.id, { x: docX, y: docY, w: 0, h: 0 })
+        e.currentTarget.setPointerCapture(e.pointerId)
+        return
+      }
+
       // Pan when: view tool active, OR space held (and not in fit mode — fit
       // ignores pan). In move tool without space, a body click just selects.
       const wantPan = isViewTool || (spaceHeld && !win.fitMode)
@@ -267,11 +290,26 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
       e.currentTarget.setPointerCapture(e.pointerId)
       if (!win.isSelected) selectWindow(id)
     },
-    [win, isViewTool, isDrawTool, spaceHeld, selectWindow, id, resetWindowZoom100, beginStroke],
+    [win, isViewTool, isDrawTool, isCropTool, spaceHeld, selectWindow, id, resetWindowZoom100, beginStroke, setCropRect],
   )
 
   const onBodyPointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      // CROP: update the crop rect as the user drags.
+      if (isCropTool && cropDragRef.current && win && bodyRef.current) {
+        const rect = bodyRef.current.getBoundingClientRect()
+        const vp = computeViewport(win, rect.width, rect.height)
+        const px = e.clientX - rect.left
+        const py = e.clientY - rect.top
+        const docX = (px - vp.offsetX) / vp.scale
+        const docY = (py - vp.offsetY) / vp.scale
+        const x = Math.min(cropDragRef.current.startX, docX)
+        const y = Math.min(cropDragRef.current.startY, docY)
+        const w = Math.abs(docX - cropDragRef.current.startX)
+        const h = Math.abs(docY - cropDragRef.current.startY)
+        setCropRect(win.id, { x, y, w, h })
+        return
+      }
       // DRAW: extend the active stroke if one is in progress.
       if (
         isDrawTool &&
@@ -308,7 +346,7 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
       st.origPanX = targetX
       st.origPanY = targetY
     },
-    [panWindowBy, id, win, isDrawTool, extendStroke],
+    [panWindowBy, id, win, isDrawTool, isCropTool, extendStroke, setCropRect],
   )
 
   // ---- wheel zoom (anchored at cursor) ----
@@ -400,13 +438,15 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
       ? computeViewport(win, bodySize.w, bodySize.h)
       : null
   const gridOn = viewport ? shouldShowGrid(win, viewport) : false
-  const cursor = isDrawTool
+  const cursor = isCropTool
     ? 'crosshair'
-    : isViewTool
-      ? 'grab'
-      : spaceHeld
+    : isDrawTool
+      ? 'crosshair'
+      : isViewTool
         ? 'grab'
-        : 'default'
+        : spaceHeld
+          ? 'grab'
+          : 'default'
 
   const closeBtn = (
     <button
@@ -811,6 +851,16 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
           />
         )}
 
+        {/* M8 crop overlay (spec §16) — dim outside the rect, bright border inside. */}
+        {viewport && win.cropRect && win.cropRect.w > 0 && win.cropRect.h > 0 && (
+          <CropOverlay
+            cropRect={win.cropRect}
+            vp={viewport}
+            docW={win.naturalWidth}
+            docH={win.naturalHeight}
+          />
+        )}
+
         {/* EXCLUDED corner ribbon */}
         {isExcluded && (
           <div className="pointer-events-none absolute right-0 top-0">
@@ -938,5 +988,68 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
         </div>
       )}
     </motion.div>
+  )
+}
+
+/** CropOverlay — dims the area outside the crop rect + draws a bright border. */
+function CropOverlay({
+  cropRect,
+  vp,
+  docW,
+  docH,
+}: {
+  cropRect: { x: number; y: number; w: number; h: number }
+  vp: Viewport
+  docW: number
+  docH: number
+}) {
+  // Screen-space rect of the crop region.
+  const sx = vp.offsetX + cropRect.x * vp.scale
+  const sy = vp.offsetY + cropRect.y * vp.scale
+  const sw = cropRect.w * vp.scale
+  const sh = cropRect.h * vp.scale
+  // Document bounds on screen (for the dim mask).
+  const dx = vp.offsetX
+  const dy = vp.offsetY
+  const dw = docW * vp.scale
+  const dh = docH * vp.scale
+  return (
+    <div className="pointer-events-none absolute inset-0" aria-hidden>
+      {/* Dim mask via 4 rectangles around the crop region (within doc bounds). */}
+      {/* top */}
+      <div className="absolute bg-black/55" style={{ left: dx, top: dy, width: dw, height: Math.max(0, sy - dy) }} />
+      {/* bottom */}
+      <div className="absolute bg-black/55" style={{ left: dx, top: sy + sh, width: dw, height: Math.max(0, dy + dh - (sy + sh)) }} />
+      {/* left */}
+      <div className="absolute bg-black/55" style={{ left: dx, top: sy, width: Math.max(0, sx - dx), height: sh }} />
+      {/* right */}
+      <div className="absolute bg-black/55" style={{ left: sx + sw, top: sy, width: Math.max(0, dx + dw - (sx + sw)), height: sh }} />
+      {/* bright border */}
+      <div
+        className="absolute border-2 border-emerald-400 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
+        style={{ left: sx, top: sy, width: sw, height: sh }}
+      >
+        {/* rule-of-thirds guides */}
+        <div className="absolute inset-0">
+          <div className="absolute left-1/3 top-0 h-full w-px bg-emerald-300/30" />
+          <div className="absolute left-2/3 top-0 h-full w-px bg-emerald-300/30" />
+          <div className="absolute top-1/3 left-0 h-px w-full bg-emerald-300/30" />
+          <div className="absolute top-2/3 left-0 h-px w-full bg-emerald-300/30" />
+        </div>
+        {/* corner handles */}
+        {[
+          { left: -3, top: -3 },
+          { right: -3, top: -3 },
+          { left: -3, bottom: -3 },
+          { right: -3, bottom: -3 },
+        ].map((pos, i) => (
+          <div
+            key={i}
+            className="absolute h-2 w-2 rounded-sm bg-emerald-400 ring-1 ring-black/40"
+            style={pos}
+          />
+        ))}
+      </div>
+    </div>
   )
 }

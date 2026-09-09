@@ -17,6 +17,7 @@ import { useEditorStore } from '@/store/editor-store'
  * M5: L (toggle Layers panel via a custom window event the Sidebar listens to).
  * M6: P (Vẽ tool), [ (brush smaller), ] (brush larger), Ctrl+Z (undo last stroke).
  * M7: T (Text tool).
+ * M8: C (Cắt ảnh/Crop tool), X (Xóa/Delete tool), Delete key (delete selected layer).
  * All ignore focus inside input/textarea/select/contenteditable — EXCEPT
  * Ctrl+Z which is also allowed there (so undo works while editing a layer name).
  */
@@ -65,6 +66,13 @@ export function EditorShell() {
         s.setTool('draw')
       } else if (k === 't') {
         s.setTool('text')
+      } else if (k === 'c') {
+        s.setTool('crop')
+      } else if (k === 'x') {
+        s.setTool('delete')
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Delete selected layer (spec §15). Refuses last layer (store guard).
+        s.deleteSelectedLayer()
       } else if (k === 'l') {
         // Toggle the Layers panel via a window event the Sidebar subscribes to.
         window.dispatchEvent(new CustomEvent('zmi:toggle-layers'))

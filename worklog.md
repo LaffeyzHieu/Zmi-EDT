@@ -597,3 +597,79 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M8 — Delete / Crop:** delete elements (spec §15) with batch-aware confirmation (§33), and crop (spec §16 — distinguish Crop vs Cut, label `Cắt ảnh`). This is the first milestone that destroys document state, so it pairs naturally with a first pass at M9 (history) to make deletion undoable. Could fold M9 history in alongside M8.
 - Optional polish: inline text editing (double-click text on canvas), drag-to-move layers on canvas (§19).
+
+---
+
+## Milestone 8 — Delete & Crop (DONE)
+
+### Current project status (assessment)
+- **M1-M7:** done & stable (regression-verified again this round: text edit, zoom, fit, exclude).
+- **M8 Delete & Crop:** implemented & verified end-to-end this round.
+- **Stack unchanged.** No new deps. `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M8 scope (spec §15 Xóa, §16 Cắt ảnh, §33 confirmation):**
+
+1. **Types** (`src/lib/editor-types.ts`): added `cropRect` to `ImageWindow` (document-px rect, null when no crop). `EditorTool` extended with `'crop'` and `'delete'`.
+
+2. **Store** (`src/store/editor-store.ts`): new M8 actions:
+   - `deleteSelectedLayer()` — deletes the selected layer of the selected window (delegates to M5 `deleteLayer`, which refuses the last layer per §17).
+   - `batchDeleteFromMain(targetIdentity)` — deletes all layers with matching identity in MAIN + all batch-enabled windows (spec §15 MAIN deletion + §33). Refuses to delete the last layer in any window. Returns affected window ids.
+   - `setCropRect(windowId, rect|null)` — sets the in-progress crop rect.
+   - `applyCrop(windowId)` — commits the crop: clamps to document bounds, changes `naturalWidth/Height`, shifts all layer transforms (x,y) + stroke points by `(-rect.x, -rect.y)` so the cropped region becomes the new origin, resets viewport to fit. Local by default (§16).
+   - `addImages` now seeds `cropRect: null`.
+
+3. **DeletePanel** (`src/components/editor/DeletePanel.tsx`, new): the `Xóa` panel (spec §15).
+   - Shows selected layer info (name, identity, type, layer count).
+   - "Xóa layer này" (local delete, rose) — disabled when only 1 layer remains, with "Window chỉ còn 1 layer — không xóa được" message.
+   - "Xóa trên batch" (amber) — enabled only when selected=MAIN AND batchCount>0 AND identity≠'image' (refuses batch-delete of the implicit image layer since every window needs ≥1). Shows "N cửa sổ" badge.
+   - AlertDialog confirmation (§33): "Xóa layer X (identity Y) trong N cửa sổ (MAIN + M active). EXCLUDED không bị ảnh hưởng. Không thể hoàn tác (history sẽ land ở M9)."
+
+4. **CropPanel** (`src/components/editor/CropPanel.tsx`, new): the `Cắt ảnh` panel (spec §16).
+   - Shows current doc size (naturalW × naturalH) + the in-progress crop rect (or "— chưa chọn —").
+   - "Áp dụng cắt" (emerald) + "Hủy" buttons.
+   - Hint: "Kéo trên ảnh để chọn vùng cắt. Áp dụng sẽ đổi kích thước ảnh + dịch layer cho khớp. Local — không phát batch (§16)."
+
+5. **ImageWindow** (`src/components/editor/ImageWindow.tsx`):
+   - **Crop pointer handling:** when `tool === 'crop'`, body pointer-down begins a crop rect drag (document coords), pointer-move updates the rect (min corner + abs delta), pointer-up ends the drag (rect stays until Apply/Cancel). `cropDragRef` tracks the start point.
+   - **CropOverlay** component (new, bottom of file): dims the area outside the crop rect (4 black/55% rects), draws a bright emerald border with rule-of-thirds guides + 4 corner handles.
+   - Cursor: `crosshair` when crop tool active.
+
+6. **Sidebar** (`src/components/editor/Sidebar.tsx`): `Xóa` + `Cắt ảnh` nav items now toggle-active (renamed "Cắt" → "Cắt ảnh" per spec §16 recommendation). Renders `<DeletePanel/>` / `<CropPanel/>` when their tools are active. Tool hint box extended for crop (emerald) + delete (rose). Footer tag → "v0.1 · Milestone 8".
+
+7. **EditorShell** (`src/components/editor/EditorShell.tsx`): added M8 keyboard shortcuts: `C` (Cắt ảnh tool), `X` (Xóa tool), `Delete`/`Backspace` (delete selected layer — the store guard refuses the last layer).
+
+**Verification (agent-browser + VLM):**
+
+| Test | Result |
+|---|---|
+| Regression M1-M7 (import, MAIN, zoom, fit, exclude, text edit, layer panel) | ✅ |
+| Click Xóa → DeletePanel renders (layer info, "Xóa layer này", "Xóa trên batch N cửa sổ") | ✅ |
+| Add text layer → click "Xóa layer này" → "1 layer" (text removed) | ✅ |
+| Last-layer delete disabled + "Window chỉ còn 1 layer — không xóa được" message | ✅ |
+| Click Cắt ảnh → CropPanel renders (doc size 512×512, "Vùng cắt — chưa chọn —") | ✅ |
+| Draw crop rect via synthetic pointer → panel shows "57,99 · 199×133" | ✅ |
+| Click "Áp dụng cắt" → dimension badge 512×512 → **199×133** | ✅ VLM-confirmed |
+| Crop is LOCAL — gemini stays 512×512 (not cropped) | ✅ VLM-confirmed |
+| Batch delete: add text to claude+gemini, select MAIN, click "Xóa trên batch 3 cửa sổ" | ✅ |
+| Batch delete dialog: "Xóa layer Text 0fe9 (identity text) trong 3 cửa sổ (MAIN + 2 active)" | ✅ |
+| Confirm → text layers removed from all 3 windows, claude back to "1 layer", 0 text divs on canvas | ✅ |
+| M7 regression: add text, edit content → "M8 OK" renders | ✅ |
+| M3 regression: zoom `+`→156%, `0`→fit | ✅ |
+| M2 regression: exclude gemini via `B` → `1 in batch · 1 excluded` | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Screenshots:** `tool-results/m8-cropped.png`, `m8-final.png`.
+
+### Unresolved issues / risks
+- **No undo for delete/crop yet** (spec §15 "operation creates an undo history entry"). M9 (history) will make these undoable. The DeletePanel dialog explicitly warns "Không thể hoàn tác (history sẽ land ở M9)".
+- **Crop is vector-only** — `applyCrop` shifts layer transforms + stroke points + text positions but does NOT actually re-encode the source image pixels. The `imageUrl` still points to the original full-resolution image; the crop is a logical bounds change. M10 (export) will rasterize the cropped bounds. Acceptable for v0.1.
+- **Batch crop** (spec §16 "Batch crop should be explicit") — not wired; M4's `batchTransformFromMain` pattern can be reused if needed.
+- **Smart Batch** (spec §15) — matching by layer NAME across documents (not identity) — not wired; the current `batchDeleteFromMain` matches by `identity` which is coarser but predictable.
+- **agent-browser** cannot draw crop rects via real mouse drag; verified via direct `PointerEvent` dispatch.
+
+### Priority recommendations for next phase
+- **M9 — History:** undo/redo with per-window + batch history (spec §25, §26, §27). This is the most architecturally important remaining milestone — it makes M4-M8 edits undoable and unblocks the spec's Critical Mixed-History Test (§37). Will likely introduce an action-based history stack with `before`/`after` snapshots or inverse-action records.
+- Optional polish: inline text editing, drag-to-move layers on canvas (§19).

@@ -148,13 +148,18 @@ export interface ImageWindow {
   fitMode: boolean
   /** Pixel grid visibility (spec §21). */
   showGrid: boolean
-  /**
-   * Ordered layer list. Index 0 = bottom. M4 seeds one implicit image layer.
+  /** Ordered layer list. Index 0 = bottom. M4 seeds one implicit image layer.
    * `selectedLayerId` points to the active editing target (defaults to the
    * only layer).
    */
   layers: Layer[]
   selectedLayerId: string | null
+  /**
+   * M8 crop in-progress rect (spec §16). In DOCUMENT px (pre-viewport-scale).
+   * `null` when no crop is being drawn. The crop is local to the window until
+   * "Apply crop" commits it (which changes naturalWidth/Height + shifts layers).
+   */
+  cropRect: { x: number; y: number; w: number; h: number } | null
   /** Unix ms of import — used for stable cascading placement. */
   importedAt: number
 }
@@ -169,8 +174,8 @@ export const MAX_ZOOM = 32
 /** When `zoom` (or fit-scale) exceeds this, the pixel grid auto-appears (§21). */
 export const GRID_AUTO_THRESHOLD = 8
 
-/** The active sidebar tool (spec §10 Di chuyển, §11 Xem, §12 Sửa→Biến đổi, §13 Vẽ, §18 Text). UI state. */
-export type EditorTool = 'move' | 'view' | 'transform' | 'draw' | 'text'
+/** The active sidebar tool (spec §10 Di chuyển, §11 Xem, §12 Sửa→Biến đổi, §13 Vẽ, §18 Text, §15 Xóa, §16 Cắt ảnh). UI state. */
+export type EditorTool = 'move' | 'view' | 'transform' | 'draw' | 'text' | 'crop' | 'delete'
 
 /** Default transform for a freshly imported image layer. */
 export function defaultTransform(): LayerTransform {
