@@ -181,3 +181,25 @@ export type EditorTool = 'move' | 'view' | 'transform' | 'draw' | 'text' | 'crop
 export function defaultTransform(): LayerTransform {
   return { x: 0, y: 0, scale: 1, rotation: 0, flipX: false, flipY: false }
 }
+
+/**
+ * A reusable uploaded asset (spec §24). Distinct from a workspace window
+ * (which is an active editable document). Closing a window does NOT delete
+ * the underlying asset. The asset keeps its object URL + natural dims so it
+ * can be re-used to create a new window or added as a layer without re-reading
+ * the file.
+ */
+export interface UploadedAsset {
+  /** Stable internal asset ID (UUID). */
+  id: string
+  /** Original uploaded filename. */
+  fileName: string
+  /** Object URL for the source image (revoked only when the asset is deleted
+   * from the library, NOT when a window using it is closed). */
+  imageUrl: string
+  /** Decoded natural pixel dimensions. */
+  naturalWidth: number
+  naturalHeight: number
+  /** Unix ms of upload. */
+  uploadedAt: number
+}

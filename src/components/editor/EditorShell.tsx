@@ -18,6 +18,7 @@ import { useEditorStore } from '@/store/editor-store'
  * M6: P (Vẽ tool), [ (brush smaller), ] (brush larger), Ctrl+Z (undo last stroke).
  * M9: History (undo/redo) via Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y.
  * M10: S (toggle Tải về / Export panel).
+ * M11: A (toggle Xem file đã upload / Asset Library panel).
  * All ignore focus inside input/textarea/select/contenteditable — EXCEPT
  * Ctrl+Z which is also allowed there (so undo works while editing a layer name).
  */
@@ -82,6 +83,9 @@ export function EditorShell() {
       } else if (k === 's') {
         // Toggle the Export panel via a window event the Sidebar subscribes to.
         window.dispatchEvent(new CustomEvent('zmi:toggle-export'))
+      } else if (k === 'a') {
+        // Toggle the Asset Library panel via a window event the Sidebar subscribes to.
+        window.dispatchEvent(new CustomEvent('zmi:toggle-assets'))
       } else if (k === '[') {
         s.setBrushSize(s.brushSize - 2)
       } else if (k === ']') {

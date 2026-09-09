@@ -28,6 +28,7 @@ import { TextPanel } from './TextPanel'
 import { DeletePanel } from './DeletePanel'
 import { CropPanel } from './CropPanel'
 import { ExportPanel } from './ExportPanel'
+import { AssetLibraryPanel } from './AssetLibraryPanel'
 
 /**
  * Sidebar — black navigation panel (matches the `ZmiEDT (1).png` mockup).
@@ -85,6 +86,7 @@ export function Sidebar() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [layersOpen, setLayersOpen] = useState(true)
   const [exportOpen, setExportOpen] = useState(false)
+  const [assetsOpen, setAssetsOpen] = useState(false)
   const addImages = useEditorStore((s) => s.addImages)
   const setMain = useEditorStore((s) => s.setMain)
   const setTool = useEditorStore((s) => s.setTool)
@@ -112,15 +114,18 @@ export function Sidebar() {
   const undo = useEditorStore((s) => s.undo)
   const redo = useEditorStore((s) => s.redo)
 
-  // Listen for the keyboard-shortcut events (L, S) dispatched by EditorShell.
+  // Listen for the keyboard-shortcut events (L, S, A) dispatched by EditorShell.
   useEffect(() => {
     const onToggleLayers = () => setLayersOpen((v) => !v)
     const onToggleExport = () => setExportOpen((v) => !v)
+    const onToggleAssets = () => setAssetsOpen((v) => !v)
     window.addEventListener('zmi:toggle-layers', onToggleLayers)
     window.addEventListener('zmi:toggle-export', onToggleExport)
+    window.addEventListener('zmi:toggle-assets', onToggleAssets)
     return () => {
       window.removeEventListener('zmi:toggle-layers', onToggleLayers)
       window.removeEventListener('zmi:toggle-export', onToggleExport)
+      window.removeEventListener('zmi:toggle-assets', onToggleAssets)
     }
   }, [])
 
@@ -374,12 +379,16 @@ export function Sidebar() {
           <NavItem
             icon={<FolderOpen className="h-4 w-4" />}
             label="Xem file đã upload"
-            soon
+            active={assetsOpen}
+            onClick={() => setAssetsOpen((v) => !v)}
           />
         </NavGroup>
 
         {/* M10: Export panel — toggle via the Tải về nav item */}
         {exportOpen && <ExportPanel />}
+
+        {/* M11: Asset Library panel — toggle via the Xem file đã upload nav item */}
+        {assetsOpen && <AssetLibraryPanel />}
       </nav>
 
       {/* Footer: Undo / Redo (M9) */}
@@ -417,10 +426,10 @@ export function Sidebar() {
           </button>
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          <span>v0.1 · Milestone 10</span>
+          <span>v0.1 · Milestone 11</span>
         </div>
         <div className="mt-0.5 text-center text-[9px] text-white/20">
-          phím tắt: M · B · V · D · E · T · P · C · X · L · S · 0 1 + - · G · F · R · [ ] · Del · Ctrl+Z/Y · Esc
+          phím tắt: M · B · V · D · E · T · P · C · X · L · S · A · 0 1 + - · G · F · R · [ ] · Del · Ctrl+Z/Y · Esc
         </div>
       </div>
     </aside>

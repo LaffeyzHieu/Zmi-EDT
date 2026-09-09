@@ -806,3 +806,68 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M11 — Asset Library:** `Xem file đã upload` (spec §24) — reuse uploaded assets without re-importing. Show preview + filename; actions: view, reuse, drag into workspace, delete from library. This is the last "reusable asset" piece before the polish milestones.
 - Optional polish: export progress bar, drag-to-move layers on canvas (§19), inline text editing.
+
+---
+
+## Milestone 11 — Asset Library (DONE)
+
+### Current project status (assessment)
+- **M1-M10:** done & stable (regression-verified again this round: export, undo, zoom).
+- **M11 Asset Library:** implemented & verified end-to-end this round.
+- **Stack unchanged** (no new deps beyond M10's jszip/file-saver). `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M11 scope (spec §24 Uploaded File Library):**
+
+1. **Asset model** (`src/lib/editor-types.ts`): added `UploadedAsset` interface — `{ id, fileName, imageUrl, naturalWidth, naturalHeight, uploadedAt }`. Distinct from `ImageWindow` (spec §24: "Workspace window = active editable document; Uploaded asset = reusable source file. Closing a window should not necessarily delete the asset.").
+
+2. **Store** (`src/store/editor-store.ts`): new asset state + actions:
+   - `assets: UploadedAsset[]` registry.
+   - `addAsset(file)` — reads the file, dedups by fileName + naturalW + naturalH (reuses existing asset's URL if matched, revokes the new duplicate URL). Returns asset id. Called automatically by `addImages` on every import.
+   - `deleteAsset(assetId)` — revokes the asset's object URL + removes from registry. Windows using the asset's URL will break (image won't load) — the delete dialog warns about this.
+   - `createWindowFromAsset(assetId)` — creates a new window reusing the asset's URL (no file re-read, no new object URL). Auto-selects + auto-MAIN if none.
+   - `addAssetAsLayer(windowId, assetId)` — delegates to `addImageLayer` with the asset's URL/dims/name.
+   - **`closeWindow` updated** (M11 fix): only revokes the window's object URL if NO asset in the library shares it. Windows created via `createWindowFromAsset` reuse the asset's URL, so closing them no longer breaks the asset or sibling windows. This is the key correctness fix for the asset/window URL sharing model.
+
+3. **AssetLibraryPanel** (`src/components/editor/AssetLibraryPanel.tsx`, new): the `Xem file đã upload` panel (spec §24).
+   - **Grid of asset cards** (2 columns, max-h-72 scroll): each card shows a square preview (object-contain on checkerboard), filename (truncated w/ title), natural dims (512×512), and an "image" type badge.
+   - **Hover overlay actions** (3 buttons per card, centered):
+     - **Reuse as new window** (sky +) → `createWindowFromAsset`.
+     - **Add as layer** (emerald image-plus) → `addAssetAsLayer` to the selected window (disabled if no window selected, with tooltip).
+     - **Delete from library** (rose trash) → opens an AlertDialog confirmation (spec §33): "Asset X sẽ bị xóa khỏi thư viện. Các window đang dùng asset này sẽ không còn hiển thị ảnh. Không thể hoàn tác."
+   - Empty state: "Chưa có file nào. Nhập ảnh để thêm vào thư viện."
+   - Feedback message after each action ("Đã tạo window mới từ X" / "Đã thêm X như layer" / "Đã xóa asset X").
+   - Footer hint: "Asset ≠ window · đóng window không xóa asset (§24)".
+
+4. **Sidebar** (`src/components/editor/Sidebar.tsx`): "Xem file đã upload" nav item now a toggle (active state). Renders `<AssetLibraryPanel/>` when open. Footer tag → "v0.1 · Milestone 11".
+
+5. **EditorShell** (`src/components/editor/EditorShell.tsx`): added `A` keyboard shortcut → dispatches `zmi:toggle-assets` window event; Sidebar listens + toggles the panel.
+
+**Verification (agent-browser):**
+
+| Test | Result |
+|---|---|
+| Regression M1-M10 (import, MAIN, zoom, fit, undo, export) | ✅ |
+| Import 2 images → asset library auto-populated ("2 file") | ✅ |
+| Click "Xem file đã upload" → AssetLibraryPanel renders (2 cards: claude + gemini, each with preview + dims + 3 hover actions) | ✅ VLM-confirmed |
+| Reuse asset (claude) → "Đã tạo window mới từ claude.png", 3 windows total | ✅ |
+| Select gemini + Add as layer (gemini asset) → gemini now has 2 layers ("2 layers" badge) | ✅ |
+| Delete asset (claude) → dialog "Xóa asset?" → confirm → "1 file", "Đã xóa asset claude.png" | ✅ |
+| M10 regression: export current → "Đã xuất gemini.png" | ✅ |
+| M9 regression: Ctrl+Z undo | ✅ |
+| M3 regression: zoom `+`→125% | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Screenshots:** `tool-results/m11-assetpanel.png`, `m11-assetpanel2.png`, `m11-final.png`.
+
+### Unresolved issues / risks
+- **URL sharing model:** `createWindowFromAsset` reuses the asset's object URL. `closeWindow` checks if any asset shares the URL before revoking. This is correct for the current model but means: if you delete the ASSET, all windows using its URL break (image won't render). The delete dialog warns about this. A future improvement could give each window its own URL copy (cost: double memory per image) for full isolation.
+- **`dropImageIntoWindow`** (M5) creates a transient URL not registered as an asset — revoked on window close. Acceptable; dropped images aren't auto-added to the library. Could be wired to `addAsset` too if desired.
+- **No drag-from-library-to-workspace** (spec §24 mentions "drag into workspace") — the Reuse button covers the equivalent action (create window from asset). A real HTML5 DnD from the panel card to the workspace is a polish item.
+- **No asset preview modal** ("view" action per §24) — the card thumbnail is the preview. A full-size modal is polish.
+
+### Priority recommendations for next phase
+- **M12 — Ngắm waifu** (spec §22): the viewing mode that hides editor UI/windows so the user can inspect artwork cleanly. Toggle must preserve selections, MAIN, batch state, edits. Simple + fun. This is the last feature milestone before M13 polish.
+- Optional polish: drag-from-library-to-workspace, asset preview modal, drag-to-move layers on canvas (§19), inline text editing.

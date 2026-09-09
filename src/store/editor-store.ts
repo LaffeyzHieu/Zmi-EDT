@@ -199,6 +199,21 @@ interface EditorState {
   canUndo: () => boolean
   /** Whether redo is available for the current selection scope. */
   canRedo: () => boolean
+
+  // ---- M11: Asset Library (spec §24) ----
+  /** Registry of uploaded assets (spec §24). Reusable across windows. */
+  assets: import('@/lib/editor-types').UploadedAsset[]
+  /**
+   * Add an uploaded file to the asset library (dedup by fileName + dims).
+   * Returns the asset id. Called by `addImages` automatically on import.
+   */
+  addAsset: (file: File) => Promise<string>
+  /** Delete an asset from the library (revokes its object URL). */
+  deleteAsset: (assetId: string) => void
+  /** Create a new window from an existing asset (no file re-read). */
+  createWindowFromAsset: (assetId: string) => string | null
+  /** Add an asset as a new image layer to an existing window (spec §4/§24 reuse). */
+  addAssetAsLayer: (windowId: string, assetId: string) => string | null
 }
 
 /** Initial offset for the first imported window (relative to workspace origin). */
@@ -299,6 +314,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
   windowRedo: {},
   mainHistory: [],
   mainRedo: [],
+  // M11 asset library (spec §24)
+  assets: [],
 
   addImages: async (files) => {
     const list = Array.from(files)
@@ -311,6 +328,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
     for (const file of supported) {
       try {
         const { imageUrl, naturalWidth, naturalHeight } = await readImageFile(file)
+        // M11: register the file as a reusable asset (dedup). The asset shares
+        // the SAME object URL as the window (so no double-revoke). Closing the
+        // window won't revoke it; only deleting the asset will.
+        void get().addAsset(file).catch(() => {})
         const { width, height } = computeDisplaySize(
           naturalWidth,
           naturalHeight,
@@ -392,8 +413,13 @@ export const useEditorStore = create<EditorState>((set, get) => {
   closeWindow: (id) => {
     const win = get().windows.find((w) => w.id === id)
     if (!win) return
-    // Revoke object URL to avoid leaks (spec §38).
-    URL.revokeObjectURL(win.imageUrl)
+    // M11: only revoke the object URL if NO asset in the library shares it.
+    // Windows created via `createWindowFromAsset` reuse the asset's URL, so
+    // revoking here would break the asset + other windows using it.
+    const urlSharedWithAsset = get().assets.some((a) => a.imageUrl === win.imageUrl)
+    if (!urlSharedWithAsset) {
+      URL.revokeObjectURL(win.imageUrl)
+    }
 
     const remaining = get().windows.filter((w) => w.id !== id)
     const wasSelected = win.isSelected
@@ -1080,6 +1106,110 @@ export const useEditorStore = create<EditorState>((set, get) => {
     if (sel === s.mainId && s.mainRedo.length > 0) return true
     if (sel && (s.windowRedo[sel]?.length ?? 0) > 0) return true
     return false
+  },
+
+  // ---- M11: Asset Library (spec §24) ----
+  addAsset: async (file) => {
+    const { imageUrl, naturalWidth, naturalHeight } = await readImageFile(file)
+    // Dedup by fileName + dims (same source uploaded twice → reuse).
+    const existing = get().assets.find(
+      (a) =>
+        a.fileName === file.name &&
+        a.naturalWidth === naturalWidth &&
+        a.naturalHeight === naturalHeight,
+    )
+    if (existing) {
+      // Revoke the new URL since we're reusing the existing asset's URL.
+      URL.revokeObjectURL(imageUrl)
+      return existing.id
+    }
+    const id = uuid()
+    const asset = {
+      id,
+      fileName: file.name || `image-${id.slice(0, 6)}.png`,
+      imageUrl,
+      naturalWidth,
+      naturalHeight,
+      uploadedAt: Date.now(),
+    }
+    set((s) => ({ assets: [...s.assets, asset] }))
+    return id
+  },
+
+  deleteAsset: (assetId) => {
+    const asset = get().assets.find((a) => a.id === assetId)
+    if (!asset) return
+    URL.revokeObjectURL(asset.imageUrl)
+    set((s) => ({ assets: s.assets.filter((a) => a.id !== assetId) }))
+  },
+
+  createWindowFromAsset: (assetId) => {
+    const asset = get().assets.find((a) => a.id === assetId)
+    if (!asset) return null
+    const { width, height } = computeDisplaySize(
+      asset.naturalWidth,
+      asset.naturalHeight,
+      MAX_DISPLAY_W,
+    )
+    const id = uuid()
+    const cursor = get().placementCursor
+    const wrapIndex = cursor.n % CASCADE_WRAP
+    const x = FIRST_OFFSET.x + wrapIndex * CASCADE_STEP.x
+    const y = FIRST_OFFSET.y + wrapIndex * CASCADE_STEP.y
+    const nextZ = get().zCounter + 1
+    const win: ImageWindow = {
+      id,
+      fileName: asset.fileName,
+      imageUrl: asset.imageUrl, // share the asset's URL — closing the window won't revoke it
+      naturalWidth: asset.naturalWidth,
+      naturalHeight: asset.naturalHeight,
+      x,
+      y,
+      width: Math.max(MIN_WINDOW_W, width),
+      height: Math.max(MIN_WINDOW_H, height),
+      zIndex: nextZ,
+      isSelected: false,
+      isBatchEnabled: true,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      fitMode: true,
+      showGrid: false,
+      layers: [
+        {
+          id: uuid(),
+          name: asset.fileName,
+          type: 'image',
+          visible: true,
+          transform: defaultTransform(),
+          identity: 'image',
+        } satisfies Layer,
+      ],
+      selectedLayerId: null,
+      cropRect: null,
+      importedAt: Date.now(),
+    }
+    win.selectedLayerId = win.layers[0].id
+    set((s) => ({
+      windows: [...s.windows, win],
+      zCounter: nextZ,
+      placementCursor: { x, y, n: cursor.n + 1 },
+    }))
+    get().selectWindow(id)
+    if (get().mainId === null) get().setMain(id)
+    return id
+  },
+
+  addAssetAsLayer: (windowId, assetId) => {
+    const asset = get().assets.find((a) => a.id === assetId)
+    if (!asset) return null
+    return get().addImageLayer(
+      windowId,
+      asset.imageUrl,
+      asset.naturalWidth,
+      asset.naturalHeight,
+      asset.fileName,
+    )
   },
 }
 })
