@@ -45,19 +45,35 @@ export interface Layer {
   id: string
   /** Display name. For the implicit image layer, the source filename. */
   name: string
-  /** Layer type. M4 only has 'image' (the source pixels). M5+ adds 'text'. */
+  /** Layer type. M4: 'image'. M5: adds 'text'. M7 will wire full text editing. */
   type: 'image' | 'text'
-  /** Whether the layer is visible (eye toggle). M5 wires the panel; M4 keeps true. */
+  /** Whether the layer is visible (eye toggle) (spec §17). */
   visible: boolean
   /** Transform of the layer inside the document (spec §19). */
   transform: LayerTransform
   /**
    * Stable batch identity — used to match the "same" layer across documents
-   * when broadcasting batch actions (spec §8 target matching). For M4 every
-   * imported image layer shares `identity = 'image'` so a MAIN transform
-   * applies to the image layer of every batch-enabled window.
+   * when broadcasting batch actions (spec §8 target matching). For imported
+   * image layers, 'image'. Text layers default to 'text' but the user can
+   * rename the identity to group texts across documents for batch.
    */
   identity: string
+  /**
+   * Text-layer properties (spec §18). Only meaningful when `type === 'text'`.
+   * Full text editing UI lands in M7; M5 seeds text layers so the Layer panel
+   * has more than one layer type to demonstrate.
+   */
+  text?: LayerText
+}
+
+/** Text layer properties (spec §18). */
+export interface LayerText {
+  content: string
+  fontFamily: string
+  fontSize: number // px, in document space (pre-scale)
+  color: string // hex
+  bold: boolean
+  italic: boolean
 }
 
 /** Document-space transform of a layer (spec §9, §19). */

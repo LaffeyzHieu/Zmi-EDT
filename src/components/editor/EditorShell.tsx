@@ -14,6 +14,7 @@ import { useEditorStore } from '@/store/editor-store'
  * M2 shortcuts (spec §34): M (set MAIN), B (toggle batch), Esc (deselect).
  * M3: V (Xem), D (Di chuyển), 0 (fit), 1 (100%), +/= (zoom in), -/_ (zoom out), G (grid).
  * M4: E (Sửa/Biến đổi tool), F (flip X selected layer), R (rotate selected +15°).
+ * M5: L (toggle Layers panel via a custom window event the Sidebar listens to).
  * All ignore focus inside input/textarea/select/contenteditable and modifier-held combos.
  */
 export function EditorShell() {
@@ -47,6 +48,9 @@ export function EditorShell() {
         s.setTool('move')
       } else if (k === 'e') {
         s.setTool('transform')
+      } else if (k === 'l') {
+        // Toggle the Layers panel via a window event the Sidebar subscribes to.
+        window.dispatchEvent(new CustomEvent('zmi:toggle-layers'))
       } else if (k === '0') {
         if (sel) s.fitWindow(sel)
       } else if (k === '1') {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import {
   Move,
   Eye,
@@ -21,6 +21,7 @@ import {
 import { useEditorStore } from '@/store/editor-store'
 import { cn } from '@/lib/utils'
 import { TransformPanel } from './TransformPanel'
+import { LayerPanel } from './LayerPanel'
 
 /**
  * Sidebar — black navigation panel (matches the `ZmiEDT (1).png` mockup).
@@ -76,6 +77,7 @@ function Divider() {
 
 export function Sidebar() {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [layersOpen, setLayersOpen] = useState(true)
   const addImages = useEditorStore((s) => s.addImages)
   const setMain = useEditorStore((s) => s.setMain)
   const setTool = useEditorStore((s) => s.setTool)
@@ -86,6 +88,13 @@ export function Sidebar() {
     s.windows.find((w) => w.id === s.mainId),
   )
   const hasWindows = useEditorStore((s) => s.windows.length > 0)
+
+  // Listen for the keyboard-shortcut event (L) dispatched by EditorShell.
+  useEffect(() => {
+    const onToggle = () => setLayersOpen((v) => !v)
+    window.addEventListener('zmi:toggle-layers', onToggle)
+    return () => window.removeEventListener('zmi:toggle-layers', onToggle)
+  }, [])
 
   const openPicker = () => fileInputRef.current?.click()
 
@@ -240,9 +249,17 @@ export function Sidebar() {
           <NavItem icon={<Brush className="h-4 w-4" />} label="Vẽ" soon />
           <NavItem icon={<Trash2 className="h-4 w-4" />} label="Xóa" soon />
           <NavItem icon={<Scissors className="h-4 w-4" />} label="Cắt" soon />
-          <NavItem icon={<Layers className="h-4 w-4" />} label="Xem lớp" soon />
+          <NavItem
+            icon={<Layers className="h-4 w-4" />}
+            label="Xem lớp"
+            active={layersOpen}
+            onClick={() => setLayersOpen((v) => !v)}
+          />
           <NavItem icon={<Pipette className="h-4 w-4" />} label="Color Picker" soon />
         </NavGroup>
+
+        {/* M5: Layers panel — toggle via the Xem lớp nav item */}
+        {layersOpen && <LayerPanel />}
         <Divider />
         <NavGroup>
           <NavItem
@@ -287,10 +304,10 @@ export function Sidebar() {
           </button>
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          <span>v0.1 · Milestone 4</span>
+          <span>v0.1 · Milestone 5</span>
         </div>
         <div className="mt-0.5 text-center text-[9px] text-white/20">
-          phím tắt: M · B · V · D · E · 0 1 + - · G · F · R · Esc
+          phím tắt: M · B · V · D · E · L · 0 1 + - · G · F · R · Esc
         </div>
       </div>
     </aside>

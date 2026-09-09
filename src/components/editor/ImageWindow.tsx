@@ -98,6 +98,7 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
   const zoomWindowBy = useEditorStore((s) => s.zoomWindowBy)
   const toggleWindowGrid = useEditorStore((s) => s.toggleWindowGrid)
   const resizeWindow = useEditorStore((s) => s.resizeWindow)
+  const dropImageIntoWindow = useEditorStore((s) => s.dropImageIntoWindow)
 
   const isMain = mainId === id
   const isExcluded = win ? !win.isBatchEnabled && !isMain : false
@@ -106,6 +107,7 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
   const [mainDialogOpen, setMainDialogOpen] = useState(false)
   const [bodySize, setBodySize] = useState({ w: 0, h: 0 })
   const [spaceHeld, setSpaceHeld] = useState(false)
+  const [dropHover, setDropHover] = useState(false)
 
   const bodyRef = useRef<HTMLDivElement>(null)
   const dragState = useRef<DragState | null>(null)
@@ -543,16 +545,45 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
         )}
       </div>
 
-      {/* Image body — viewport for zoom/pan/grid (spec §9, §20, §21) */}
+      {/* Image body — viewport for zoom/pan/grid (spec §9, §20, §21).
+          Also a drop target: dropping an image here adds it as a layer (§4). */}
       <div
         ref={bodyRef}
-        className="relative flex-1 overflow-hidden bg-[repeating-conic-gradient(#1f1f23_0%_25%,#26262b_0%_50%)] bg-[length:16px_16px]"
+        className={cn(
+          'relative flex-1 overflow-hidden bg-[repeating-conic-gradient(#1f1f23_0%_25%,#26262b_0%_50%)] bg-[length:16px_16px] transition-[box-shadow]',
+          dropHover && 'ring-2 ring-inset ring-sky-400/80',
+        )}
         style={{ cursor }}
         onPointerDown={onBodyPointerDown}
         onPointerMove={onBodyPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onWheel={onBodyWheel}
+        onDragOver={(e) => {
+          // Allow drop only when the dragged thing carries files.
+          if (e.dataTransfer?.types?.includes('Files')) {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+            if (!dropHover) setDropHover(true)
+          }
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDropHover(false)
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          e.stopPropagation() // don't bubble to workspace (which would create a window)
+          setDropHover(false)
+          const files = e.dataTransfer?.files
+          if (!files || files.length === 0) return
+          // Spec §4: dropping onto an existing window adds a layer, NOT a window.
+          // Process files sequentially; each becomes its own image layer.
+          void (async () => {
+            for (const f of Array.from(files)) {
+              await dropImageIntoWindow(win.id, f)
+            }
+          })()
+        }}
       >
         {/* checkerboard transparency grid for the image area only */}
         {viewport && (
@@ -570,10 +601,69 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
           />
         )}
 
-        {/* the image — placed via layer transform (spec §19) */}
+        {/* layers — placed via layer transform (spec §19). Image layers use the
+            window's natural size (the source image); text layers render a
+            sized <div> with the layer's text content (M5 preview, full text
+            editing in M7). */}
         {viewport &&
           win.layers.map((layer) => {
             if (!layer.visible) return null
+            const isSelectedLayer =
+              win.isSelected && layer.id === win.selectedLayerId
+
+            if (layer.type === 'text' && layer.text) {
+              // Text layer: size by content (approx via fontSize). We give the
+              // box a width based on content length × fontSize, height = fontSize × 1.4.
+              const t = layer.text
+              const approxW = Math.max(40, t.content.length * t.fontSize * 0.55)
+              const approxH = t.fontSize * 1.4
+              const place = computeLayerPlacement(
+                approxW,
+                approxH,
+                layer.transform,
+                viewport,
+              )
+              const sx = place.flipX ? -1 : 1
+              const sy = place.flipY ? -1 : 1
+              return (
+                <div
+                  key={layer.id}
+                  className="pointer-events-none absolute"
+                  style={{
+                    left: place.left,
+                    top: place.top,
+                    width: place.width,
+                    height: place.height,
+                    transform: `rotate(${place.rotation}deg) scale(${sx}, ${sy})`,
+                    transformOrigin: 'top left',
+                  }}
+                >
+                  <div
+                    className="absolute inset-0 flex items-start justify-start whitespace-pre"
+                    style={{
+                      fontFamily: t.fontFamily,
+                      fontSize: `${t.fontSize * viewport.scale * layer.transform.scale}px`,
+                      color: t.color,
+                      fontWeight: t.bold ? 700 : 400,
+                      fontStyle: t.italic ? 'italic' : 'normal',
+                      lineHeight: 1.2,
+                      textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                    }}
+                  >
+                    {t.content}
+                  </div>
+                  {isSelectedLayer && (
+                    <div
+                      className="pointer-events-none absolute inset-0 border-2 border-dashed border-sky-400/80"
+                      style={{ boxShadow: '0 0 0 1px rgba(0,0,0,0.4)' }}
+                      aria-hidden
+                    />
+                  )}
+                </div>
+              )
+            }
+
+            // Image layer
             const place = computeLayerPlacement(
               win.naturalWidth,
               win.naturalHeight,
@@ -582,8 +672,6 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
             )
             const sx = place.flipX ? -1 : 1
             const sy = place.flipY ? -1 : 1
-            const isSelectedLayer =
-              win.isSelected && layer.id === win.selectedLayerId
             return (
               <div
                 key={layer.id}
@@ -609,7 +697,6 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
                     imageRendering: viewport.scale * layer.transform.scale >= 8 ? 'pixelated' : 'auto',
                   }}
                 />
-                {/* transform bbox outline when this layer is the active target */}
                 {isSelectedLayer && (
                   <div
                     className="pointer-events-none absolute inset-0 border-2 border-dashed border-sky-400/80"

@@ -383,3 +383,75 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M5 — Layers:** full layer panel (spec §17) — list, select, hide/show, reorder, rename, delete. Add text layer type (preview for M7). Drop-onto-window-as-layer (§4) can finally land here. This unlocks the full layer model that M4's transforms already operate on.
 - Optional polish to fold in alongside M5: drag-to-move the selected layer directly on the canvas (mouse drag updates X/Y per spec §19 "Mouse dragging should update these values"), and a layer thumbnail in the panel.
+
+---
+
+## Milestone 5 — Layers (DONE)
+
+### Current project status (assessment)
+- **M1-M4:** done & stable (regression-verified again this round: zoom, fit, MAIN no-op exclude, transform panel edit + batch).
+- **M5 Layers:** implemented & verified end-to-end this round.
+- **Stack unchanged.** No new deps. `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M5 scope (spec §17 Xem lớp, §4 drop-onto-window, §18 text preview):**
+
+1. **Layer model** (`src/lib/editor-types.ts`): added `LayerText` (content, fontFamily, fontSize, color, bold, italic — spec §18) and `Layer.text?` field. Text layers default `identity: 'text'` so future batch operations can target all texts.
+
+2. **Store** (`src/store/editor-store.ts`): new layer actions (spec §17 + §4):
+   - `addImageLayer(windowId, imageUrl, naturalW, naturalH, name?)` — adds an image layer; auto-selects it.
+   - `addTextLayer(windowId, content?)` — adds a text layer with sane defaults (32px white, Inter, "Văn bản mới"); auto-selects it.
+   - `selectLayer(windowId, layerId|null)`.
+   - `toggleLayerVisibility(windowId, layerId)` (spec §17 hide/show).
+   - `renameLayer(windowId, layerId, name)` (clamped to 64 chars).
+   - `reorderLayer(windowId, layerId, delta)` (move up/down; splices array).
+   - `deleteLayer(windowId, layerId)` — **refuses to delete the last remaining layer** (spec §17 keeps ≥1).
+   - `dropImageIntoWindow(windowId, file)` — async, validates + reads + adds as image layer (spec §4).
+
+3. **LayerPanel** (`src/components/editor/LayerPanel.tsx`, new): the `Xem lớp` panel (spec §17).
+   - Lists layers top-to-bottom = front-to-back (reverse of stored order).
+   - Each row: eye toggle (hide/show), type icon (image/text), name (double-click to rename inline with ✓/✗ confirm), identity badge, hover actions (rename pencil, move up/down chevrons, delete trash).
+   - "Thêm layer" dropdown menu (spec §4 "+"): "Ảnh (file)" (file picker), "Ảnh (lắp từ MAIN)" (disabled when not MAIN), "Văn bản" (adds text layer).
+   - Performance: subscribes to the selected WINDOW object (stable ref unless mutated) rather than picking array fields — avoids the `useShallow` infinite-loop trap that hit TransformPanel in M4.
+
+4. **ImageWindow** (`src/components/editor/ImageWindow.tsx`):
+   - Layer rendering now branches: text layers render a `<div>` with the text content styled per `LayerText` (font, size, color, bold/italic, text-shadow), placed via `computeLayerPlacement` with `transformOrigin: top left`; image layers unchanged from M4.
+   - **Drop-onto-window-as-layer** (spec §4): the window body is now a drop target. `onDragOver` accepts only file-bearing drags; `onDrop` calls `dropImageIntoWindow` for each file (no window created). A sky inset ring shows drop-hover state. `e.stopPropagation()` prevents the workspace from also creating a window.
+   - Selected-layer dashed bbox outline still applies to both image and text layers.
+
+5. **Sidebar** (`src/components/editor/Sidebar.tsx`): "Xem lớp" nav item now a toggle (active state highlighted). Renders `<LayerPanel/>` when open (default open). Footer tag → "v0.1 · Milestone 5".
+
+6. **EditorShell** (`src/components/editor/EditorShell.tsx`): added `L` keyboard shortcut → dispatches a `zmi:toggle-layers` window event; Sidebar listens and toggles the panel.
+
+**Verification (agent-browser + VLM):**
+
+| Test | Result |
+|---|---|
+| Regression M1-M4 (import, MAIN, zoom, fit, transform edit, MAIN no-op exclude) | ✅ |
+| LayerPanel renders with the implicit image layer (claude.png, IMAGE badge) | ✅ |
+| Add text layer via "Thêm layer" → "Văn bản" → "2 layers", text "Văn bản mới" renders on canvas (white + shadow) | ✅ VLM-confirmed |
+| Text layer selected → dashed sky bbox around text | ✅ VLM-confirmed |
+| Rename layer "Tiêu đề" via inline edit (✓ commit) | ✅ |
+| Hide/show eye toggle → text disappears/reappears on canvas | ✅ |
+| Reorder: move image layer up → image becomes top (front) | ✅ |
+| Delete selected text layer → only claude.png image remains ("1 layer") | ✅ |
+| Delete last layer refused (claude.png stays) | ✅ (delete button disabled when layers.length===1) |
+| M4 regression: switch to Sửa → Rotation=30 → image rotate(30deg) | ✅ |
+| M3 regression: zoom `+`→156%, `0`→fit | ✅ |
+| M2 regression: `B` on MAIN → no-op | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Screenshots:** `tool-results/m5-text-layer.png`, `m5-after-delete.png`, `m5-final.png`.
+
+### Unresolved issues / risks
+- **Added image layers render at the WINDOW's natural size**, not their own. The store accepts `naturalWidth/Height` for added image layers but currently doesn't store them per-layer (the comment in `addImageLayer` explains the deferral). For M5 this means a dropped-in 2nd image renders at the source image's size. M6+ will add a per-layer dimension cache. Acceptable for M5 since the primary use case is one image per window + text overlays.
+- **Text layer sizing** is approximate (content.length × fontSize × 0.55). M7 (full text editing) will use a proper measure pass.
+- **No history** for layer add/delete/reorder/rename yet — M9.
+- **Drop-onto-window** verified via code path; agent-browser cannot synthesize OS file drags, so a real human DnD test is recommended.
+- **Batch add layer** (spec §4 "If the user wants the new layer applied to the batch, that must be an explicit batch action") — not yet wired; M4's batch transform covers the transform case, and a future "batch add layer" can reuse the `batchTransformFromMain` pattern.
+
+### Priority recommendations for next phase
+- **M6 — Draw:** freehand brush on the selected layer (spec §13). Will likely need a per-layer raster buffer (OffscreenCanvas or a `<canvas>`) since CSS-styled `<img>`/`<div>` can't hold brush strokes. This is the first milestone that touches pixel-level document state beyond transforms.
+- Optional polish to fold in alongside M6: drag-to-move the selected layer directly on the canvas (mouse drag updates X/Y per spec §19 "Mouse dragging should update these values"), and a layer thumbnail in the panel.
