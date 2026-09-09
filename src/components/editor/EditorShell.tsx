@@ -32,16 +32,19 @@ export function EditorShell() {
           t.tagName === 'SELECT' ||
           t.isContentEditable)
 
-      // Ctrl/Cmd+Z → undo last stroke (spec §13 undo/redo, M9 wires full history).
+      // Ctrl/Cmd+Z → undo (spec §25, §34). Shift = redo.
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         const s = useEditorStore.getState()
-        const sel = s.selectedWindowId
-        if (sel) {
-          const w = s.windows.find((x) => x.id === sel)
-          if (w && w.selectedLayerId) {
-            s.undoLastStroke(sel, w.selectedLayerId)
-          }
+        if (e.shiftKey) {
+          s.redo()
+        } else {
+          s.undo()
         }
+        return
+      }
+      // Ctrl/Cmd+Y → redo (spec §34).
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        useEditorStore.getState().redo()
         return
       }
 

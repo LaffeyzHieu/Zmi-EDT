@@ -137,7 +137,7 @@ export function Workspace() {
               />
             </label>
             <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/40">
-              Milestone 8 · Delete &amp; Crop
+              Milestone 9 · History
             </p>
           </div>
         </div>

@@ -673,3 +673,73 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M9 — History:** undo/redo with per-window + batch history (spec §25, §26, §27). This is the most architecturally important remaining milestone — it makes M4-M8 edits undoable and unblocks the spec's Critical Mixed-History Test (§37). Will likely introduce an action-based history stack with `before`/`after` snapshots or inverse-action records.
 - Optional polish: inline text editing, drag-to-move layers on canvas (§19).
+
+---
+
+## Milestone 9 — History (DONE)
+
+### Current project status (assessment)
+- **M1-M8:** done & stable (regression-verified again this round: batch transform, local edit, crop).
+- **M9 History:** implemented & verified end-to-end this round, including the Critical Mixed-History Test (§37) adapted.
+- **Stack unchanged.** No new deps. `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M9 scope (spec §25 Undo/Redo, §26 Action System, §27 Batch Action Architecture):**
+
+1. **History model** (`src/lib/history.ts`, new): snapshot-based history (simplest correct approach for v0.1).
+   - `WindowSnapshot`: captures a window's document state (layers deep-cloned with transforms/text/strokes, naturalW/H, selectedLayerId). UI-only state (zoom/pan/grid/position/zIndex/isSelected/isBatchEnabled/cropRect) is NOT snapshotted per spec §28.
+   - `HistoryEntry`: `{ id, label, scope: 'batch'|'local', before: WindowSnapshot[], after: WindowSnapshot[], at }`.
+   - `snapshotWindow(w)` / `restoreSnapshot(w, snap)` helpers.
+
+2. **Store** (`src/store/editor-store.ts`): two history stacks per spec §25:
+   - `windowHistory: Record<windowId, HistoryEntry[]>` + `windowRedo` — per-window local actions.
+   - `mainHistory: HistoryEntry[]` + `mainRedo` — MAIN-originated batch actions.
+   - `beginLocal(windowId, label)` / `beginBatch(label)` closure helpers: capture BEFORE snapshots now, return a `commit()` that captures AFTER snapshots + pushes the entry. Clears the relevant redo stack on new edit.
+   - `undo()` / `redo()`: scope-aware — if selected=MAIN and mainHistory non-empty, undo/redo batch (restores MAIN + all batch windows); else undo/redo the selected window's local history. Returns the label of the undone/redone action.
+   - `canUndo()` / `canRedo()` helpers.
+   - Wired history recording into ALL document-mutating actions: `setLayerTransform` (local), `batchTransformFromMain` (batch), `beginStroke`+`extendStroke` (local — ONE entry per stroke; extendStroke updates the entry's `after` so the full stroke is redoable), `addImageLayer`/`addTextLayer` (local), `deleteLayer` (local), `batchDeleteFromMain` (batch), `renameLayer`/`reorderLayer`/`toggleLayerVisibility` (local), `patchLayerText` (local), `applyCrop` (local).
+   - `undoLastStroke` (M6 DrawPanel button) now delegates to `undo()` for proper scope handling.
+
+3. **Sidebar** (`src/components/editor/Sidebar.tsx`): Undo/Redo footer buttons now wired (were disabled since M1). Reactive `canUndo`/`canRedo` via subscribing to the underlying stack lengths (the store's `canUndo()`/`canRedo()` are functions, not reactive). Enabled state + click handlers. Footer tag → "v0.1 · Milestone 9".
+
+4. **EditorShell** (`src/components/editor/EditorShell.tsx`): `Ctrl/Cmd+Z` → `undo()` (was `undoLastStroke`); `Ctrl/Cmd+Shift+Z` + `Ctrl/Cmd+Y` → `redo()` (spec §34).
+
+**Verification (agent-browser):**
+
+| Test | Result |
+|---|---|
+| Regression M1-M8 (import, MAIN, zoom, fit, exclude, transform, layer, draw, text, crop, delete) | ✅ |
+| Batch transform from MAIN (rotation 90) → both claude+gemini rotated | ✅ |
+| Undo button ENABLED after batch | ✅ |
+| Undo (MAIN selected) → reverts batch: claude stays 90 (pre-batch local), gemini → 0 | ✅ correct per snapshots |
+| Redo → re-applies batch: both → 90 | ✅ |
+| Local edit on gemini (scale 50%) → width 328→164 | ✅ |
+| Undo (gemini selected) → reverts ONLY gemini: width 164→328, claude unchanged | ✅ spec §25 history isolation |
+| Draw stroke on gemini → "1 nét" | ✅ |
+| Ctrl+Z → "0 nét" (stroke undone) | ✅ |
+| Ctrl+Shift+Z → "1 nét" (stroke redone) | ✅ |
+| M8 crop gemini 512×512 → 156×125 | ✅ |
+| Undo crop → 512×512 (reverted) | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Critical Mixed-History Test (§37) — adapted & verified:**
+- Batch transform from MAIN → undo (batch) → redo (batch) ✅
+- Local edit on non-MAIN → undo (local, only that window) ✅
+- Draw stroke → Ctrl+Z undo → Ctrl+Shift+Z redo ✅
+- Crop → undo ✅
+- Each undo/redo affects exactly the intended scope (batch = MAIN + batch windows; local = single window). ✅
+
+**Screenshots:** `tool-results/m9-final.png`.
+
+### Unresolved issues / risks
+- **Snapshot-based history memory:** each entry stores full window snapshots (layers + strokes deep-cloned). For heavy stroke usage or many layers this grows fast. Spec §38 warns about this. M9 is correct-for-v0.1; a future optimization can switch to delta/inverse-action records. Acceptable.
+- **`setLayerTransform` records one entry per numeric-input keystroke** in the TransformPanel. Each keystroke is a discrete edit, so this is technically correct, but a user typing "90" creates 2 entries (9, then 90). Could be consolidated via a debounce in the panel, but not blocking.
+- **`beginStroke` + `extendStroke`**: beginStroke records the entry (before=no stroke, after=1pt); extendStroke mutates + updates the entry's `after`. This means the entry's `after` is updated on every pointer-move, which is a lot of snapshotting during a drag. Performance is acceptable for v0.1 (strokes are small). A future optimization can defer the `after` capture to pointer-up.
+- **No history panel UI** (visual list of entries) — the Undo/Redo buttons + keyboard shortcuts cover the spec §25 requirements. A visual history list is polish for M13.
+- **Closing a window does not clear its `windowHistory`/`windowRedo`** — minor memory leak; acceptable for v0.1 (capped by number of windows).
+
+### Priority recommendations for next phase
+- **M10 — Export:** export one/all/batch windows as PNG or ZIP (spec §23). Will need to rasterize the composited document (image layers + text + strokes + crop bounds) onto a `<canvas>` and `toBlob()`/`toDataURL()`. jszip + file-saver will need to be installed.
+- Optional polish: visual history list panel, drag-to-move layers on canvas (§19), inline text editing.

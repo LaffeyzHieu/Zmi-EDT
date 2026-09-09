@@ -94,6 +94,22 @@ export function Sidebar() {
   )
   const hasWindows = useEditorStore((s) => s.windows.length > 0)
 
+  // M9: reactive undo/redo availability (the store's canUndo/canRedo are
+  // functions; subscribe to the underlying stacks to get reactive booleans).
+  const mainHistoryLen = useEditorStore((s) => s.mainHistory.length)
+  const mainRedoLen = useEditorStore((s) => s.mainRedo.length)
+  const winHistLen = useEditorStore(
+    (s) => (s.selectedWindowId ? (s.windowHistory[s.selectedWindowId]?.length ?? 0) : 0),
+  )
+  const winRedoLen = useEditorStore(
+    (s) => (s.selectedWindowId ? (s.windowRedo[s.selectedWindowId]?.length ?? 0) : 0),
+  )
+  const isMainSel = selectedId === mainId
+  const canUndo = isMainSel ? mainHistoryLen > 0 : winHistLen > 0
+  const canRedo = isMainSel ? mainRedoLen > 0 : winRedoLen > 0
+  const undo = useEditorStore((s) => s.undo)
+  const redo = useEditorStore((s) => s.redo)
+
   // Listen for the keyboard-shortcut event (L) dispatched by EditorShell.
   useEffect(() => {
     const onToggle = () => setLayersOpen((v) => !v)
@@ -351,31 +367,45 @@ export function Sidebar() {
         </NavGroup>
       </nav>
 
-      {/* Footer: Undo / Redo */}
+      {/* Footer: Undo / Redo (M9) */}
       <div className="border-t border-white/10 px-3 py-2.5">
         <div className="flex items-center justify-between">
           <button
             type="button"
-            disabled
-            className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-white/45 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-55"
+            disabled={!canRedo}
+            onClick={() => redo()}
+            title="Redo (Ctrl+Shift+Z)"
+            className={cn(
+              'flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors',
+              canRedo
+                ? 'text-white/85 hover:bg-white/10 hover:text-white'
+                : 'cursor-not-allowed text-white/30',
+            )}
           >
             <Redo2 className="h-3.5 w-3.5" />
             Redo
           </button>
           <button
             type="button"
-            disabled
-            className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-white/45 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-55"
+            disabled={!canUndo}
+            onClick={() => undo()}
+            title="Undo (Ctrl+Z)"
+            className={cn(
+              'flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors',
+              canUndo
+                ? 'text-white/85 hover:bg-white/10 hover:text-white'
+                : 'cursor-not-allowed text-white/30',
+            )}
           >
             <Undo2 className="h-3.5 w-3.5" />
             Undo
           </button>
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          <span>v0.1 · Milestone 8</span>
+          <span>v0.1 · Milestone 9</span>
         </div>
         <div className="mt-0.5 text-center text-[9px] text-white/20">
-          phím tắt: M · B · V · D · E · T · P · C · X · L · 0 1 + - · G · F · R · [ ] · Del · Esc
+          phím tắt: M · B · V · D · E · T · P · C · X · L · 0 1 + - · G · F · R · [ ] · Del · Ctrl+Z/Y · Esc
         </div>
       </div>
     </aside>

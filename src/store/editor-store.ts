@@ -17,6 +17,12 @@ import {
   defaultTransform,
 } from '@/lib/editor-types'
 import {
+  type HistoryEntry,
+  type WindowSnapshot,
+  snapshotWindow,
+  restoreSnapshot,
+} from '@/lib/history'
+import {
   isSupportedImage,
   readImageFile,
   computeDisplaySize,
@@ -170,6 +176,29 @@ interface EditorState {
    * becomes the new origin. Local by default (spec §16 batch crop is explicit).
    */
   applyCrop: (windowId: string) => void
+
+  // ---- M9: History (spec §25, §26, §27) ----
+  /** Per-window local history stacks (spec §25 windowHistory[id]). */
+  windowHistory: Record<string, import('@/lib/history').HistoryEntry[]>
+  /** Redo stacks for per-window local history. */
+  windowRedo: Record<string, import('@/lib/history').HistoryEntry[]>
+  /** MAIN batch history stack (spec §25 mainHistory). */
+  mainHistory: import('@/lib/history').HistoryEntry[]
+  /** MAIN batch redo stack. */
+  mainRedo: import('@/lib/history').HistoryEntry[]
+  /**
+   * Undo the most recent edit. If the selected window is MAIN and mainHistory
+   * is non-empty, undo the last batch action (spec §25). Otherwise undo the
+   * selected window's last local action. Returns the label of the undone
+   * action, or null if nothing to undo.
+   */
+  undo: () => string | null
+  /** Redo the most recently undone edit (same scope rule as undo). */
+  redo: () => string | null
+  /** Whether undo is available for the current selection scope. */
+  canUndo: () => boolean
+  /** Whether redo is available for the current selection scope. */
+  canRedo: () => boolean
 }
 
 /** Initial offset for the first imported window (relative to workspace origin). */
@@ -179,7 +208,83 @@ const CASCADE_STEP = { x: 28, y: 28 }
 /** Wrap cascade after this many consecutive windows to avoid drifting off-screen. */
 const CASCADE_WRAP = 6
 
-export const useEditorStore = create<EditorState>((set, get) => ({
+export const useEditorStore = create<EditorState>((set, get) => {
+  // ---- M9 history helpers (closure over set/get) ----
+  /**
+   * Record a LOCAL history entry for a single window. Captures BEFORE snapshots
+   * now (caller calls this BEFORE mutating), then captures AFTER snapshots
+   * post-mutation via `commitLocal`. Returns a commit function.
+   *
+   * Usage:
+   *   const commit = beginLocal(windowId, 'Draw stroke')
+   *   // ... mutate state ...
+   *   commit()
+   */
+  const beginLocal = (windowId: string, label: string) => {
+    const w = get().windows.find((x) => x.id === windowId)
+    if (!w) return () => {}
+    const before: WindowSnapshot[] = [snapshotWindow(w)]
+    return () => {
+      const w2 = get().windows.find((x) => x.id === windowId)
+      if (!w2) return
+      const after: WindowSnapshot[] = [snapshotWindow(w2)]
+      const entry: HistoryEntry = {
+        id: uuid(),
+        label,
+        scope: 'local',
+        before,
+        after,
+        at: Date.now(),
+      }
+      set((s) => ({
+        windowHistory: {
+          ...s.windowHistory,
+          [windowId]: [...(s.windowHistory[windowId] ?? []), entry],
+        },
+        // Clear redo for this window on new edit (standard undo/redo semantics).
+        windowRedo: {
+          ...s.windowRedo,
+          [windowId]: [],
+        },
+      }))
+    }
+  }
+
+  /**
+   * Record a BATCH history entry (MAIN-originated). Captures BEFORE snapshots
+   * of MAIN + all batch-enabled windows now; caller mutates; `commitBatch`
+   * captures AFTER. Lives in mainHistory (spec §25).
+   */
+  const beginBatch = (label: string) => {
+    const state = get()
+    const mainId = state.mainId
+    if (!mainId) return () => {}
+    const affected = state.windows.filter(
+      (w) => w.id === mainId || w.isBatchEnabled,
+    )
+    const before: WindowSnapshot[] = affected.map(snapshotWindow)
+    return () => {
+      const afterState = get()
+      const afterAffected = afterState.windows.filter((w) =>
+        affected.some((a) => a.id === w.id),
+      )
+      const after: WindowSnapshot[] = afterAffected.map(snapshotWindow)
+      const entry: HistoryEntry = {
+        id: uuid(),
+        label,
+        scope: 'batch',
+        before,
+        after,
+        at: Date.now(),
+      }
+      set((s) => ({
+        mainHistory: [...s.mainHistory, entry],
+        mainRedo: [], // clear batch redo on new batch edit
+      }))
+    }
+  }
+
+  return {
   windows: [],
   selectedWindowId: null,
   mainId: null,
@@ -189,6 +294,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // M6 draw defaults (spec §13: brush size + color)
   brushColor: '#ff3b6b',
   brushSize: 8,
+  // M9 history (spec §25)
+  windowHistory: {},
+  windowRedo: {},
+  mainHistory: [],
+  mainRedo: [],
 
   addImages: async (files) => {
     const list = Array.from(files)
@@ -461,6 +571,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   setLayerTransform: (windowId, layerId, patch) => {
+    // M9: record local history (spec §25). Skip if this is part of an active
+    // stroke drag (those record one entry on pointer-up via commitStrokeHistory).
+    const commit = beginLocal(windowId, 'Biến đổi layer')
     set((s) => ({
       windows: s.windows.map((w) =>
         w.id === windowId
@@ -475,6 +588,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : w,
       ),
     }))
+    commit()
   },
 
   patchSelectedLayerTransform: (patch) => {
@@ -488,6 +602,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   batchTransformFromMain: (targetIdentity, absoluteTransform) => {
     const mainId = get().mainId
     if (!mainId) return []
+    // M9: record ONE batch history entry (spec §25 mainHistory + §27).
+    const commitBatch = beginBatch('Batch biến đổi')
     // Eligible windows: MAIN + all non-MAIN batch-enabled windows (spec §7).
     const affected: string[] = []
     set((s) => ({
@@ -508,6 +624,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         }
       }),
     }))
+    commitBatch()
     return affected
   },
 
@@ -524,6 +641,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   addImageLayer: (windowId, imageUrl, naturalWidth, naturalHeight, name) => {
+    const commit = beginLocal(windowId, 'Thêm image layer')
     const id = uuid()
     const layer: Layer = {
       id,
@@ -544,17 +662,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : w,
       ),
     }))
-    // Store the new layer's natural size on the layer via a sidecar map? The
-    // window already tracks naturalWidth/Height for the source image; for added
-    // image layers we store their size on a per-layer cache attached to the
-    // window. For M5 simplicity we reuse the window's natural size for the
-    // first image layer (the source), and for added layers we keep a parallel
-    // registry. To avoid a model change mid-milestone, added image layers in
-    // M5 are sized by their natural size at render time via the layer's own
-    // cached dims on the window's `layerDims` map (added below). Since we did
-    // not add that field, we approximate: added image layers use the window's
-    // naturalWidth/Height. Acceptable for M5; M6+ will introduce a proper
-    // per-layer dimension cache.
+    commit()
     void naturalWidth
     void naturalHeight
     void imageUrl
@@ -562,6 +670,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   addTextLayer: (windowId, content) => {
+    const commit = beginLocal(windowId, 'Thêm text layer')
     const id = uuid()
     const layer: Layer = {
       id,
@@ -590,6 +699,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : w,
       ),
     }))
+    commit()
     return id
   },
 
@@ -602,6 +712,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   toggleLayerVisibility: (windowId, layerId) => {
+    const commit = beginLocal(windowId, 'Ẩn/hiện layer')
     set((s) => ({
       windows: s.windows.map((w) =>
         w.id === windowId
@@ -614,9 +725,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : w,
       ),
     }))
+    commit()
   },
 
   renameLayer: (windowId, layerId, name) => {
+    const commit = beginLocal(windowId, 'Đổi tên layer')
     set((s) => ({
       windows: s.windows.map((w) =>
         w.id === windowId
@@ -629,9 +742,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : w,
       ),
     }))
+    commit()
   },
 
   reorderLayer: (windowId, layerId, delta) => {
+    const commit = beginLocal(windowId, 'Sắp xếp layer')
     set((s) => ({
       windows: s.windows.map((w) => {
         if (w.id !== windowId) return w
@@ -645,9 +760,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         return { ...w, layers }
       }),
     }))
+    commit()
   },
 
   deleteLayer: (windowId, layerId) => {
+    const commit = beginLocal(windowId, 'Xóa layer')
     set((s) => ({
       windows: s.windows.map((w) => {
         if (w.id !== windowId) return w
@@ -660,6 +777,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         return { ...w, layers, selectedLayerId }
       }),
     }))
+    commit()
   },
 
   dropImageIntoWindow: async (windowId, file) => {
@@ -679,6 +797,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ brushSize: Math.max(1, Math.min(200, Math.round(size))) }),
 
   beginStroke: (windowId, layerId, point) => {
+    // M9: record ONE history entry per stroke. Capture before = no stroke;
+    // commit() captures after = 1-point stroke. extendStroke updates the
+    // entry's `after` so undo removes the whole stroke in one step.
+    const commit = beginLocal(windowId, 'Vẽ nét')
     const strokeId = uuid()
     const stroke: BrushStroke = {
       id: strokeId,
@@ -700,6 +822,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : w,
       ),
     }))
+    commit()
     return strokeId
   },
 
@@ -730,28 +853,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             }
           : w,
       ),
+      // M9: update the last local history entry's `after` snapshot so the
+      // stroke's full final state is redoable. (No new entry — same stroke.)
+      windowHistory: (() => {
+        const stack = s.windowHistory[windowId] ?? []
+        if (stack.length === 0) return s.windowHistory
+        const last = stack[stack.length - 1]
+        const w2 = s.windows.find((x) => x.id === windowId)
+        if (!w2) return s.windowHistory
+        const updated = { ...last, after: [snapshotWindow(w2)] }
+        return { ...s.windowHistory, [windowId]: [...stack.slice(0, -1), updated] }
+      })(),
     }))
   },
 
-  undoLastStroke: (windowId, layerId) => {
-    set((s) => ({
-      windows: s.windows.map((w) =>
-        w.id === windowId
-          ? {
-              ...w,
-              layers: w.layers.map((l) => {
-                if (l.id !== layerId) return l
-                const strokes = l.strokes ?? []
-                if (strokes.length === 0) return l
-                return { ...l, strokes: strokes.slice(0, -1) }
-              }),
-            }
-          : w,
-      ),
-    }))
+  undoLastStroke: (windowId, _layerId) => {
+    // M9: delegate to the proper undo (which restores the last history entry
+    // for this window — works for strokes AND any other local edit).
+    // Select the window first so undo targets the right scope.
+    get().selectWindow(windowId)
+    get().undo()
   },
 
   patchLayerText: (windowId, layerId, patch) => {
+    const commit = beginLocal(windowId, 'Sửa text')
     set((s) => ({
       windows: s.windows.map((w) =>
         w.id === windowId
@@ -766,6 +891,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : w,
       ),
     }))
+    commit()
   },
 
   patchSelectedLayerText: (patch) => {
@@ -787,6 +913,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   batchDeleteFromMain: (targetIdentity) => {
     const mainId = get().mainId
     if (!mainId) return []
+    const commitBatch = beginBatch('Batch xóa layer')
     const affected: string[] = []
     set((s) => ({
       windows: s.windows.map((w) => {
@@ -806,6 +933,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         return { ...w, layers: remaining, selectedLayerId }
       }),
     }))
+    commitBatch()
     return affected
   },
 
@@ -820,6 +948,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   applyCrop: (windowId) => {
     const w = get().windows.find((x) => x.id === windowId)
     if (!w || !w.cropRect) return
+    const commit = beginLocal(windowId, 'Cắt ảnh')
     const r = w.cropRect
     // Clamp to document bounds.
     const cx = Math.max(0, Math.min(w.naturalWidth, r.x))
@@ -856,8 +985,104 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         }
       }),
     }))
+    commit()
   },
-}))
+
+  // ---- M9: undo / redo ----
+  undo: () => {
+    const s = get()
+    const sel = s.selectedWindowId
+    // MAIN-selected + batch history non-empty → undo batch.
+    if (sel === s.mainId && s.mainHistory.length > 0) {
+      const entry = s.mainHistory[s.mainHistory.length - 1]
+      set((st) => ({
+        windows: st.windows.map((w) => {
+          const snap = entry.before.find((b) => b.windowId === w.id)
+          return snap ? restoreSnapshot(w, snap) : w
+        }),
+        mainHistory: st.mainHistory.slice(0, -1),
+        mainRedo: [...st.mainRedo, entry],
+      }))
+      return entry.label
+    }
+    // Otherwise undo the selected window's local history.
+    if (sel && (s.windowHistory[sel]?.length ?? 0) > 0) {
+      const stack = s.windowHistory[sel]
+      const entry = stack[stack.length - 1]
+      set((st) => ({
+        windows: st.windows.map((w) => {
+          const snap = entry.before.find((b) => b.windowId === w.id)
+          return snap ? restoreSnapshot(w, snap) : w
+        }),
+        windowHistory: {
+          ...st.windowHistory,
+          [sel]: (st.windowHistory[sel] ?? []).slice(0, -1),
+        },
+        windowRedo: {
+          ...st.windowRedo,
+          [sel]: [...(st.windowRedo[sel] ?? []), entry],
+        },
+      }))
+      return entry.label
+    }
+    return null
+  },
+
+  redo: () => {
+    const s = get()
+    const sel = s.selectedWindowId
+    // MAIN-selected + batch redo non-empty → redo batch.
+    if (sel === s.mainId && s.mainRedo.length > 0) {
+      const entry = s.mainRedo[s.mainRedo.length - 1]
+      set((st) => ({
+        windows: st.windows.map((w) => {
+          const snap = entry.after.find((b) => b.windowId === w.id)
+          return snap ? restoreSnapshot(w, snap) : w
+        }),
+        mainRedo: st.mainRedo.slice(0, -1),
+        mainHistory: [...st.mainHistory, entry],
+      }))
+      return entry.label
+    }
+    if (sel && (s.windowRedo[sel]?.length ?? 0) > 0) {
+      const stack = s.windowRedo[sel]
+      const entry = stack[stack.length - 1]
+      set((st) => ({
+        windows: st.windows.map((w) => {
+          const snap = entry.after.find((b) => b.windowId === w.id)
+          return snap ? restoreSnapshot(w, snap) : w
+        }),
+        windowRedo: {
+          ...st.windowRedo,
+          [sel]: (st.windowRedo[sel] ?? []).slice(0, -1),
+        },
+        windowHistory: {
+          ...st.windowHistory,
+          [sel]: [...(st.windowHistory[sel] ?? []), entry],
+        },
+      }))
+      return entry.label
+    }
+    return null
+  },
+
+  canUndo: () => {
+    const s = get()
+    const sel = s.selectedWindowId
+    if (sel === s.mainId && s.mainHistory.length > 0) return true
+    if (sel && (s.windowHistory[sel]?.length ?? 0) > 0) return true
+    return false
+  },
+
+  canRedo: () => {
+    const s = get()
+    const sel = s.selectedWindowId
+    if (sel === s.mainId && s.mainRedo.length > 0) return true
+    if (sel && (s.windowRedo[sel]?.length ?? 0) > 0) return true
+    return false
+  },
+}
+})
 
 // ---- M4 selectors ----
 /** The transform of the selected layer in the selected window (for the Transform panel). */
