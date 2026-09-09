@@ -137,7 +137,7 @@ export function Workspace() {
               />
             </label>
             <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/40">
-              Milestone 2 · MAIN & Batch
+              Milestone 3 · Canvas / View
             </p>
           </div>
         </div>

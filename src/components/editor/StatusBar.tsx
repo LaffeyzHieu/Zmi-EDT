@@ -1,18 +1,17 @@
 'use client'
 
-import { Crown, Layers, Ban } from 'lucide-react'
+import { Crown, Layers, Ban, Hand, Move } from 'lucide-react'
 import {
   useEditorStore,
   selectBatchCount,
   selectExcludedCount,
 } from '@/store/editor-store'
+import { formatZoom } from '@/lib/canvas-viewport'
 
 /**
  * Status bar — surfaces workspace facts the user needs to know (spec §7).
  *
- * M2 shows: total window count · MAIN filename · non-MAIN batch count ·
- * excluded count. Matches the spec example format:
- *   `6 windows · MAIN: claude.png · 5 in batch`
+ * M3 additions: active tool + zoom% of the selected window.
  */
 export function StatusBar() {
   const count = useEditorStore((s) => s.windows.length)
@@ -25,6 +24,17 @@ export function StatusBar() {
   )
   const batchCount = useEditorStore(selectBatchCount)
   const excludedCount = useEditorStore(selectExcludedCount)
+  const tool = useEditorStore((s) => s.tool)
+
+  // Compute the selected window's zoom label. We need the window body size;
+  // approximate with the window's own w/h minus title (32px) and footer hint.
+  // For a stable label we only show when not in fit mode (exact zoom) — in fit
+  // mode we show "fit".
+  const zoomLabel = selected
+    ? selected.fitMode
+      ? 'fit'
+      : formatZoom(selected.zoom)
+    : null
 
   return (
     <div className="flex h-7 shrink-0 items-center gap-3 border-t border-white/10 bg-black px-3 text-[11px] text-white/70">
@@ -67,7 +77,21 @@ export function StatusBar() {
         </>
       )}
 
-      <span className="ml-auto flex items-center gap-2 text-white/40">
+      <span className="ml-auto flex items-center gap-3 text-white/40">
+        <span className="flex items-center gap-1">
+          {tool === 'view' ? (
+            <Hand className="h-3 w-3 text-sky-300" />
+          ) : (
+            <Move className="h-3 w-3 text-white/55" />
+          )}
+          <span className="text-white/55">{tool === 'view' ? 'Xem' : 'Di chuyển'}</span>
+        </span>
+        {zoomLabel && (
+          <span className="flex items-center gap-1">
+            <span className="text-white/30">zoom</span>
+            <span className="font-medium tabular-nums text-white/80">{zoomLabel}</span>
+          </span>
+        )}
         {selected && selected.id !== mainId && (
           <span className="flex items-center gap-1">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-400" />
@@ -79,3 +103,4 @@ export function StatusBar() {
     </div>
   )
 }
+

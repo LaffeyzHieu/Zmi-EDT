@@ -4,12 +4,31 @@ import {
   useRef,
   useState,
   useCallback,
+  useEffect,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
 } from 'react'
 import { motion } from 'framer-motion'
-import { X, Minus, Crown, Ban, Check } from 'lucide-react'
+import {
+  X,
+  Minus,
+  Crown,
+  Ban,
+  Check,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Grid3x3,
+  Hand,
+} from 'lucide-react'
 import { useEditorStore } from '@/store/editor-store'
 import { cn } from '@/lib/utils'
+import {
+  computeViewport,
+  shouldShowGrid,
+  wheelToZoomFactor,
+  formatZoom,
+} from '@/lib/canvas-viewport'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,58 +46,120 @@ interface ImageWindowProps {
   workspaceRef: React.RefObject<HTMLDivElement>
 }
 
+type DragKind = 'move' | 'pan' | 'resize-se' | null
+
+interface DragState {
+  kind: DragKind
+  startX: number
+  startY: number
+  // move
+  origX?: number
+  origY?: number
+  wsW?: number
+  wsH?: number
+  w?: number
+  h?: number
+  // pan
+  origPanX?: number
+  origPanY?: number
+  // resize
+  origW?: number
+  origH?: number
+}
+
 /**
  * A floating, draggable image window.
  *
- * Milestone 2 additions:
- *   • MAIN badge (`★ MAIN`) + amber ring + double-click title to claim MAIN.
- *   • `_` toggles batch participation (spec §5). Excluded windows get a
- *     desaturated body + "EXCLUDED" ribbon. MAIN cannot be excluded.
- *   • Closing MAIN requires a confirmation dialog (spec §5). Non-MAIN closes
- *     immediately.
+ * M3 (Canvas/View) additions:
+ *   • Per-window zoom/pan/fit/100 controls (spec §20). Wheel = zoom anchored at
+ *     cursor; Space+drag (or drag in `view` tool) = pan.
+ *   • Floating viewport toolbar: fit / 100 / +/- / zoom% / grid toggle.
+ *   • Pixel grid auto-renders when very zoomed in (spec §21).
+ *   • SE resize handle (bonus polish).
+ *   • `view` tool cursor = Hand; `move` tool cursor = grab on title bar.
  *
- * Dragging the title bar moves the WINDOW in workspace coordinates — it never
- * touches image content (spec §10).
+ * Zoom/pan/grid are UI state (spec §28) — they do NOT create history (no
+ * history system exists yet in M3).
  */
 export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
-  // Per-window slice subscription so siblings don't re-render on move.
   const win = useEditorStore((s) => s.windows.find((w) => w.id === id))
   const mainId = useEditorStore((s) => s.mainId)
+  const tool = useEditorStore((s) => s.tool)
   const closeWindow = useEditorStore((s) => s.closeWindow)
   const selectWindow = useEditorStore((s) => s.selectWindow)
   const moveWindow = useEditorStore((s) => s.moveWindow)
   const setMain = useEditorStore((s) => s.setMain)
   const toggleBatchEnabled = useEditorStore((s) => s.toggleBatchEnabled)
+  const setWindowZoom = useEditorStore((s) => s.setWindowZoom)
+  const panWindowBy = useEditorStore((s) => s.panWindowBy)
+  const fitWindow = useEditorStore((s) => s.fitWindow)
+  const resetWindowZoom100 = useEditorStore((s) => s.resetWindowZoom100)
+  const zoomWindowBy = useEditorStore((s) => s.zoomWindowBy)
+  const toggleWindowGrid = useEditorStore((s) => s.toggleWindowGrid)
+  const resizeWindow = useEditorStore((s) => s.resizeWindow)
 
   const isMain = mainId === id
   const isExcluded = win ? !win.isBatchEnabled && !isMain : false
+  const isViewTool = tool === 'view'
 
   const [mainDialogOpen, setMainDialogOpen] = useState(false)
+  const [bodySize, setBodySize] = useState({ w: 0, h: 0 })
+  const [spaceHeld, setSpaceHeld] = useState(false)
 
-  // Drag state in refs to avoid re-renders during the gesture.
-  const dragState = useRef<{
-    startX: number
-    startY: number
-    origX: number
-    origY: number
-    wsW: number
-    wsH: number
-    w: number
-    h: number
-  } | null>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const dragState = useRef<DragState | null>(null)
 
+  // Track Space key for pan mode (global), but only act on the selected window.
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        const t = e.target as HTMLElement | null
+        if (
+          t &&
+          (t.tagName === 'INPUT' ||
+            t.tagName === 'TEXTAREA' ||
+            t.tagName === 'SELECT' ||
+            t.isContentEditable)
+        )
+          return
+        setSpaceHeld(true)
+      }
+    }
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpaceHeld(false)
+    }
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+    }
+  }, [])
+
+  // Observe body size so the fit viewport recomputes on resize.
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!el) return
+    const update = () =>
+      setBodySize({ w: el.clientWidth, h: el.clientHeight })
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // ---- title bar drag (move window) ----
   const onTitlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (e.button !== 0) return
-      if (!win) return
-      const ws = workspaceRef.current
-      if (!ws) return
+      if (e.button !== 0 || !win) return
       const target = e.target as HTMLElement
       if (target.closest('[data-window-control]')) return
-
+      const ws = workspaceRef.current
+      if (!ws) return
       e.preventDefault()
       const rect = ws.getBoundingClientRect()
       dragState.current = {
+        kind: 'move',
         startX: e.clientX,
         startY: e.clientY,
         origX: win.x,
@@ -88,8 +169,7 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
         w: win.width,
         h: win.height,
       }
-      const titleEl = e.currentTarget
-      titleEl.setPointerCapture(e.pointerId)
+      e.currentTarget.setPointerCapture(e.pointerId)
       selectWindow(id)
     },
     [win, workspaceRef, selectWindow, id],
@@ -98,42 +178,181 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
   const onTitlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const st = dragState.current
-      if (!st) return
+      if (!st || st.kind !== 'move') return
       const dx = e.clientX - st.startX
       const dy = e.clientY - st.startY
-      const minX = -st.w + 96
-      const maxX = st.wsW - 96
+      const minX = -(st.w ?? 0) + 96
+      const maxX = (st.wsW ?? 0) - 96
       const minY = 0
-      const maxY = st.wsH - 36
-      const nx = Math.min(maxX, Math.max(minX, st.origX + dx))
-      const ny = Math.min(maxY, Math.max(minY, st.origY + dy))
+      const maxY = (st.wsH ?? 0) - 36
+      const nx = Math.min(maxX, Math.max(minX, (st.origX ?? 0) + dx))
+      const ny = Math.min(maxY, Math.max(minY, (st.origY ?? 0) + dy))
       moveWindow(id, nx, ny)
     },
     [moveWindow, id],
   )
 
-  const endDrag = useCallback(
-    (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (dragState.current) dragState.current = null
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId)
-      } catch {
-        /* already released */
-      }
-    },
-    [],
-  )
+  const endDrag = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragState.current) dragState.current = null
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* already released */
+    }
+  }, [])
 
   const onTitleDoubleClick = useCallback(() => {
     if (!win || isMain) return
     setMain(id)
   }, [win, isMain, setMain, id])
 
+  // ---- body pan ----
+  const onBodyPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!win) return
+      if (e.button !== 0) return
+      const target = e.target as HTMLElement
+      if (target.closest('[data-window-control]')) return
+      // Pan when: view tool active, OR space held (and not in fit mode — fit
+      // ignores pan). In move tool without space, a body click just selects.
+      const wantPan = isViewTool || (spaceHeld && !win.fitMode)
+      if (!wantPan) {
+        if (!win.isSelected) selectWindow(id)
+        return
+      }
+      if (win.fitMode) {
+        // exit fit so pan/zoom has effect
+        resetWindowZoom100(id)
+      }
+      e.preventDefault()
+      dragState.current = {
+        kind: 'pan',
+        startX: e.clientX,
+        startY: e.clientY,
+        origPanX: win.panX,
+        origPanY: win.panY,
+      }
+      e.currentTarget.setPointerCapture(e.pointerId)
+      if (!win.isSelected) selectWindow(id)
+    },
+    [win, isViewTool, spaceHeld, selectWindow, id, resetWindowZoom100],
+  )
+
+  const onBodyPointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const st = dragState.current
+      if (!st || st.kind !== 'pan') return
+      const dx = e.clientX - st.startX
+      const dy = e.clientY - st.startY
+      // Target absolute pan = orig + delta. panWindowBy ADDS to current, so
+      // pass (target - current).
+      const targetX = (st.origPanX ?? 0) + dx
+      const targetY = (st.origPanY ?? 0) + dy
+      panWindowBy(id, targetX - win!.panX, targetY - win!.panY)
+      // Update the start baseline so subsequent moves are incremental & stable
+      // even if React hasn't flushed yet (panWindowBy is synchronous set).
+      st.startX = e.clientX
+      st.startY = e.clientY
+      st.origPanX = targetX
+      st.origPanY = targetY
+    },
+    [panWindowBy, id, win],
+  )
+
+  // ---- wheel zoom (anchored at cursor) ----
+  const onBodyWheel = useCallback(
+    (e: ReactWheelEvent<HTMLDivElement>) => {
+      if (!win || !bodyRef.current) return
+      // Always handle zoom over a window body — don't let the page scroll.
+      e.preventDefault()
+      const factor = wheelToZoomFactor(e.deltaY)
+      const rect = bodyRef.current.getBoundingClientRect()
+      const px = e.clientX - rect.left
+      const py = e.clientY - rect.top
+      const vp = computeViewport(win, rect.width, rect.height)
+      const curScale = win.fitMode ? vp.scale : win.zoom
+      const newScale = Math.min(32, Math.max(0.05, curScale * factor))
+      if (Math.abs(newScale - curScale) < 1e-4) return
+
+      // Anchor: keep the image point under the cursor stationary.
+      // imageX = (px - vp.offsetX) / vp.scale ; after zoom we want
+      // px = newOffsetX + imageX * newScale  => newOffsetX = px - imageX*newScale
+      const imageX = (px - vp.offsetX) / vp.scale
+      const imageY = (py - vp.offsetY) / vp.scale
+      const newOffsetX = px - imageX * newScale
+      const newOffsetY = py - imageY * newScale
+      const baseOffsetX = (rect.width - win.naturalWidth * newScale) / 2
+      const baseOffsetY = (rect.height - win.naturalHeight * newScale) / 2
+      setWindowZoom(id, newScale)
+      // Apply the pan delta needed to keep the cursor anchor — do it on next tick
+      // because setWindowZoom resets panX/panY only when entering from fit? No,
+      // setWindowZoom keeps panX/panY. So set panX/panY to match the anchor.
+      // We must compute relative to current panX/panY which were preserved.
+      // Use requestAnimationFrame-free direct store mutation via panWindowBy:
+      // Actually simpler: setWindowZoom keeps pan; we then adjust pan by the
+      // difference between desired offset and the offset that the new zoom
+      // would produce given the OLD pan.
+      const oldPanX = win.panX
+      const oldPanY = win.panY
+      // offset with old pan at new scale:
+      const offsetWithOldPanX = baseOffsetX + oldPanX
+      const offsetWithOldPanY = baseOffsetY + oldPanY
+      panWindowBy(id, newOffsetX - offsetWithOldPanX, newOffsetY - offsetWithOldPanY)
+    },
+    [win, setWindowZoom, panWindowBy, id],
+  )
+
+  // ---- SE resize ----
+  const onResizePointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!win || e.button !== 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      dragState.current = {
+        kind: 'resize-se',
+        startX: e.clientX,
+        startY: e.clientY,
+        origW: win.width,
+        origH: win.height,
+      }
+      e.currentTarget.setPointerCapture(e.pointerId)
+      selectWindow(id)
+    },
+    [win, selectWindow, id],
+  )
+
+  const onResizePointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const st = dragState.current
+      if (!st || st.kind !== 'resize-se' || !win) return
+      const dx = e.clientX - st.startX
+      const dy = e.clientY - st.startY
+      // Clamp so the window can grow up to natural size (or 2x natural for zoomed-in).
+      const maxW = Math.max(win.naturalWidth, win.width) * 1.5 + 80
+      const maxH = Math.max(win.naturalHeight, win.height) * 1.5 + 80
+      const nw = Math.min(maxW, Math.max(160, (st.origW ?? 0) + dx))
+      const nh = Math.min(maxH, Math.max(120, (st.origH ?? 0) + dy))
+      resizeWindow(id, nw, nh)
+    },
+    [resizeWindow, id, win],
+  )
+
   const onWindowPointerDown = useCallback(() => {
     if (!win?.isSelected) selectWindow(id)
   }, [win, selectWindow, id])
 
   if (!win) return null
+
+  const viewport =
+    bodySize.w > 0
+      ? computeViewport(win, bodySize.w, bodySize.h)
+      : null
+  const gridOn = viewport ? shouldShowGrid(win, viewport) : false
+  const cursor = isViewTool
+    ? 'grab'
+    : spaceHeld
+      ? 'grab'
+      : 'default'
 
   const closeBtn = (
     <button
@@ -142,11 +361,8 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
       title={isMain ? 'Đóng MAIN…' : 'Đóng window'}
       onClick={(e) => {
         e.stopPropagation()
-        if (isMain) {
-          setMainDialogOpen(true)
-        } else {
-          closeWindow(win.id)
-        }
+        if (isMain) setMainDialogOpen(true)
+        else closeWindow(win.id)
       }}
       className="flex h-5 w-5 items-center justify-center rounded-sm text-white/70 transition-colors hover:bg-rose-500/85 hover:text-white"
       aria-label="Close window"
@@ -154,6 +370,20 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
       <X className="h-3.5 w-3.5" />
     </button>
   )
+
+  // Pixel grid: draw 1px-per-image-pixel lines (auto-shown when very zoomed in).
+  const gridStep = 1
+  const gridVisible = !!viewport && gridOn && viewport.scale >= 2
+  const gridBg = gridVisible && viewport
+    ? {
+        backgroundImage:
+          'linear-gradient(to right, rgba(125,211,252,0.18) 1px, transparent 1px), linear-gradient(to bottom, rgba(125,211,252,0.18) 1px, transparent 1px)',
+        backgroundSize: `${viewport.scale * gridStep}px ${viewport.scale * gridStep}px`,
+        backgroundPosition: `${viewport.offsetX}px ${viewport.offsetY}px`,
+      }
+    : undefined
+
+  const zoomLabel = viewport ? formatZoom(viewport.scale) : '—'
 
   return (
     <motion.div
@@ -176,27 +406,25 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
         width: win.width,
         height: win.height,
         zIndex: win.zIndex,
-        cursor: 'default',
       }}
       onPointerDown={onWindowPointerDown}
       role="button"
       tabIndex={0}
       aria-label={`Window ${win.fileName}${isMain ? ' (MAIN)' : win.isSelected ? ' (selected)' : ''}${isExcluded ? ' (excluded)' : ''}`}
     >
-      {/* Title bar — drag handle */}
+      {/* Title bar — drag handle (move tool only) */}
       <div
         className={cn(
-          'flex h-8 shrink-0 items-center gap-1.5 bg-black px-2 text-white',
-          'cursor-grab active:cursor-grabbing select-none',
+          'flex h-8 shrink-0 items-center gap-1.5 bg-black px-2 text-white select-none',
+          isViewTool ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
           isMain ? 'bg-gradient-to-r from-amber-950/70 via-black to-black' : '',
         )}
-        onPointerDown={onTitlePointerDown}
+        onPointerDown={isViewTool ? undefined : onTitlePointerDown}
         onPointerMove={onTitlePointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onDoubleClick={onTitleDoubleClick}
       >
-        {/* status dot */}
         <span
           className={cn(
             'h-1.5 w-1.5 shrink-0 rounded-full',
@@ -208,7 +436,6 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
           )}
         />
 
-        {/* MAIN badge */}
         {isMain && (
           <span className="flex shrink-0 items-center gap-0.5 rounded bg-amber-400/15 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-amber-300 ring-1 ring-amber-400/40">
             <Crown className="h-2.5 w-2.5" />
@@ -216,7 +443,6 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
           </span>
         )}
 
-        {/* EXCLUDED pill (§5) — on title bar so it stays visible when cascaded */}
         {isExcluded && (
           <span className="flex shrink-0 items-center gap-0.5 rounded bg-rose-500/20 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-rose-300 ring-1 ring-rose-500/40">
             <Ban className="h-2.5 w-2.5" />
@@ -224,11 +450,18 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
           </span>
         )}
 
+        {isViewTool && (
+          <span className="flex shrink-0 items-center gap-0.5 rounded bg-sky-400/15 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-sky-300 ring-1 ring-sky-400/40">
+            <Hand className="h-2.5 w-2.5" />
+            XEM
+          </span>
+        )}
+
         <span className="flex-1 truncate text-xs font-medium text-white/90">
           {win.fileName}
         </span>
 
-        {/* `_` — batch participation toggle (§5) */}
+        {/* `_` — batch toggle */}
         <button
           type="button"
           data-window-control
@@ -270,13 +503,12 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
           )}
         </button>
 
-        {/* `X` — close (with MAIN confirm) */}
         {isMain ? (
           <AlertDialog open={mainDialogOpen} onOpenChange={setMainDialogOpen}>
             <AlertDialogTrigger asChild>
               <span
                 data-window-control
-                className="flex h-5 w-5 items-center justify-center rounded-sm text-white/70 transition-colors hover:bg-rose-500/85 hover:text-white"
+                className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-sm text-white/70 transition-colors hover:bg-rose-500/85 hover:text-white"
                 aria-label="Close MAIN window"
               >
                 <X className="h-3.5 w-3.5" />
@@ -286,7 +518,10 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
               <AlertDialogHeader>
                 <AlertDialogTitle>Đóng MAIN?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Window <span className="font-semibold text-foreground">{win.fileName}</span>{' '}
+                  Window{' '}
+                  <span className="font-semibold text-foreground">
+                    {win.fileName}
+                  </span>{' '}
                   đang là MAIN. Đóng nó sẽ gỡ MAIN khỏi batch workspace. Một
                   window khác sẽ tự được chọn làm MAIN nếu còn window.
                 </AlertDialogDescription>
@@ -307,28 +542,72 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
         )}
       </div>
 
-      {/* Image content — object-contain so aspect ratio is never distorted (§4) */}
-      <div className="relative flex-1 overflow-hidden bg-[repeating-conic-gradient(#1f1f23_0%_25%,#26262b_0%_50%)] bg-[length:16px_16px]">
-        <img
-          src={win.imageUrl}
-          alt={win.fileName}
-          draggable={false}
-          className={cn(
-            'pointer-events-none absolute inset-0 h-full w-full object-contain transition-[filter,opacity]',
-            isExcluded && 'grayscale brightness-[0.55] opacity-60',
-          )}
-        />
+      {/* Image body — viewport for zoom/pan/grid (spec §9, §20, §21) */}
+      <div
+        ref={bodyRef}
+        className="relative flex-1 overflow-hidden bg-[repeating-conic-gradient(#1f1f23_0%_25%,#26262b_0%_50%)] bg-[length:16px_16px]"
+        style={{ cursor }}
+        onPointerDown={onBodyPointerDown}
+        onPointerMove={onBodyPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onWheel={onBodyWheel}
+      >
+        {/* checkerboard transparency grid for the image area only */}
+        {viewport && (
+          <div
+            className="pointer-events-none absolute"
+            style={{
+              left: viewport.offsetX,
+              top: viewport.offsetY,
+              width: viewport.displayW,
+              height: viewport.displayH,
+              backgroundImage:
+                'repeating-conic-gradient(#2a2a30_0%_25%,#1f1f25_0%_50%)',
+              backgroundSize: '12px 12px',
+            }}
+          />
+        )}
 
-        {/* EXCLUDED ribbon (spec §5: visibly indicate excluded state) */}
+        {/* the image — explicitly positioned & scaled (no object-contain) */}
+        {viewport && (
+          <img
+            src={win.imageUrl}
+            alt={win.fileName}
+            draggable={false}
+            className={cn(
+              'pointer-events-none absolute select-none transition-[filter,opacity]',
+              isExcluded && 'grayscale brightness-[0.55] opacity-60',
+            )}
+            style={{
+              left: viewport.offsetX,
+              top: viewport.offsetY,
+              width: viewport.displayW,
+              height: viewport.displayH,
+              imageRendering: viewport.scale >= 8 ? 'pixelated' : 'auto',
+            }}
+          />
+        )}
+
+        {/* pixel grid overlay (spec §21) */}
+        {gridVisible && (
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={gridBg}
+            aria-hidden
+          />
+        )}
+
+        {/* EXCLUDED corner ribbon */}
         {isExcluded && (
-          <div className="pointer-events-none absolute right-0 top-0 rotate-0">
+          <div className="pointer-events-none absolute right-0 top-0">
             <div className="rounded-bl-md rounded-tr-md bg-rose-600/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow">
               EXCLUDED
             </div>
           </div>
         )}
 
-        {/* ACTIVE tag for batch-enabled non-MAIN windows (subtle) */}
+        {/* ACTIVE tag */}
         {!isMain && win.isBatchEnabled && (
           <div className="pointer-events-none absolute bottom-1 left-1 rounded bg-emerald-500/85 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow">
             in batch
@@ -339,9 +618,107 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
         <div className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white/80">
           {win.naturalWidth}×{win.naturalHeight}
         </div>
+
+        {/* Viewport toolbar (spec §11: fit / 100 / zoom in-out) — bottom-center */}
+        <div className="absolute bottom-1 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-md border border-white/10 bg-black/70 p-0.5 backdrop-blur-sm">
+          <button
+            type="button"
+            data-window-control
+            title="Vừa khung (fit)"
+            onClick={(e) => {
+              e.stopPropagation()
+              fitWindow(id)
+            }}
+            className={cn(
+              'flex h-6 w-6 items-center justify-center rounded text-white/75 transition-colors hover:bg-white/15 hover:text-white',
+              win.fitMode && 'bg-sky-500/30 text-sky-200',
+            )}
+            aria-label="Fit to window"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            data-window-control
+            title="Thu nhỏ"
+            onClick={(e) => {
+              e.stopPropagation()
+              zoomWindowBy(id, 1 / 1.25)
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded text-white/75 transition-colors hover:bg-white/15 hover:text-white"
+            aria-label="Zoom out"
+          >
+            <ZoomOut className="h-3.5 w-3.5" />
+          </button>
+          <div className="min-w-[44px] select-none px-1 text-center text-[11px] font-semibold tabular-nums text-white/90">
+            {zoomLabel}
+          </div>
+          <button
+            type="button"
+            data-window-control
+            title="Phóng to"
+            onClick={(e) => {
+              e.stopPropagation()
+              zoomWindowBy(id, 1.25)
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded text-white/75 transition-colors hover:bg-white/15 hover:text-white"
+            aria-label="Zoom in"
+          >
+            <ZoomIn className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            data-window-control
+            title="100%"
+            onClick={(e) => {
+              e.stopPropagation()
+              resetWindowZoom100(id)
+            }}
+            className={cn(
+              'flex h-6 items-center justify-center rounded px-1.5 text-[10px] font-semibold text-white/75 transition-colors hover:bg-white/15 hover:text-white',
+              !win.fitMode && Math.abs(win.zoom - 1) < 1e-3 && 'bg-sky-500/30 text-sky-200',
+            )}
+            aria-label="Reset to 100%"
+          >
+            1:1
+          </button>
+          <button
+            type="button"
+            data-window-control
+            title={win.showGrid ? 'Tắt lưới pixel' : 'Bật lưới pixel'}
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleWindowGrid(id)
+            }}
+            className={cn(
+              'flex h-6 w-6 items-center justify-center rounded text-white/75 transition-colors hover:bg-white/15 hover:text-white',
+              win.showGrid && 'bg-sky-500/30 text-sky-200',
+            )}
+            aria-label="Toggle pixel grid"
+            aria-pressed={win.showGrid}
+          >
+            <Grid3x3 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* SE resize handle (bonus polish) */}
+        <div
+          data-window-control
+          className="absolute bottom-0 right-0 z-10 flex h-4 w-4 cursor-nwse-resize items-end justify-end"
+          onPointerDown={onResizePointerDown}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          title="Kéo để đổi kích thước window"
+          aria-label="Resize window"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" className="text-white/45">
+            <path d="M9 1L1 9M9 5L5 9" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+        </div>
       </div>
 
-      {/* Footer hint bar — only on MAIN, to surface the double-click affordance elsewhere */}
+      {/* MAIN footer hint */}
       {isMain && (
         <div className="shrink-0 bg-amber-400/10 px-2 py-0.5 text-center text-[10px] font-medium text-amber-200/90">
           nguồn batch · nhấp đúp title bar 1 window khác để đổi MAIN

@@ -11,12 +11,11 @@ import { useEditorStore } from '@/store/editor-store'
  * The status bar sits at the bottom (sticky-footer rule) and the workspace
  * fills all remaining space.
  *
- * M2 keyboard shortcuts (spec §34 — non-conflicting additions):
- *   M       → make the selected window MAIN
- *   B       → toggle batch participation of the selected window
- *   Esc     → deselect the active window
- * Shortcuts are ignored while focus is in an input/textarea/contenteditable
- * so typing is never hijacked.
+ * M2 keyboard shortcuts (spec §34): M (set MAIN), B (toggle batch), Esc (deselect).
+ * M3 additions (spec §20/§21): V (Xem tool), D (Di chuyển tool),
+ *   0 (fit), 1 (100%), +/= (zoom in), -/_ (zoom out), G (toggle grid).
+ * All shortcuts ignore focus inside input/textarea/select/contenteditable
+ * and any modifier-held combos.
  */
 export function EditorShell() {
   useEffect(() => {
@@ -37,14 +36,26 @@ export function EditorShell() {
 
       const s = useEditorStore.getState()
       const k = e.key.toLowerCase()
+      const sel = s.selectedWindowId
+
       if (k === 'm') {
-        if (s.selectedWindowId && s.selectedWindowId !== s.mainId) {
-          s.setMain(s.selectedWindowId)
-        }
+        if (sel && sel !== s.mainId) s.setMain(sel)
       } else if (k === 'b') {
-        if (s.selectedWindowId && s.selectedWindowId !== s.mainId) {
-          s.toggleBatchEnabled(s.selectedWindowId)
-        }
+        if (sel && sel !== s.mainId) s.toggleBatchEnabled(sel)
+      } else if (k === 'v') {
+        s.setTool('view')
+      } else if (k === 'd') {
+        s.setTool('move')
+      } else if (k === '0') {
+        if (sel) s.fitWindow(sel)
+      } else if (k === '1') {
+        if (sel) s.resetWindowZoom100(sel)
+      } else if (k === '+' || k === '=') {
+        if (sel) s.zoomWindowBy(sel, 1.25)
+      } else if (k === '-' || k === '_') {
+        if (sel) s.zoomWindowBy(sel, 1 / 1.25)
+      } else if (k === 'g') {
+        if (sel) s.toggleWindowGrid(sel)
       } else if (e.key === 'Escape') {
         if (s.selectedWindowId) s.selectWindow(null)
       }

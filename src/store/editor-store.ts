@@ -5,9 +5,12 @@ import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
 import {
   type ImageWindow,
+  type EditorTool,
   MIN_WINDOW_W,
   MIN_WINDOW_H,
   MAX_DISPLAY_W,
+  MIN_ZOOM,
+  MAX_ZOOM,
 } from '@/lib/editor-types'
 import {
   isSupportedImage,
@@ -26,6 +29,8 @@ interface EditorState {
   zCounter: number
   /** Cursor for cascading placement of newly imported windows. */
   placementCursor: { x: number; y: number; n: number }
+  /** Active sidebar tool (spec §10 Di chuyển, §11 Xem). UI state. */
+  tool: EditorTool
 
   // ---- actions ----
   /**
@@ -47,6 +52,22 @@ interface EditorState {
   setMain: (id: string | null) => void
   /** Toggle a window's batch participation (spec §5 `_`). No-op if the window is MAIN. */
   toggleBatchEnabled: (id: string) => void
+  /** Set the active sidebar tool (spec §10/§11). */
+  setTool: (tool: EditorTool) => void
+  /** Set a window's zoom multiplier (clamped). Turns off fitMode. (spec §20) */
+  setWindowZoom: (id: string, zoom: number) => void
+  /** Add a screen-space delta to a window's pan offset. (spec §20) */
+  panWindowBy: (id: string, dx: number, dy: number) => void
+  /** Reset a window to fit-to-window mode. (spec §11/§20) */
+  fitWindow: (id: string) => void
+  /** Reset a window to 100% zoom, centered. (spec §11/§20) */
+  resetWindowZoom100: (id: string) => void
+  /** Step a window's zoom by a factor (anchored at the window center). */
+  zoomWindowBy: (id: string, factor: number) => void
+  /** Toggle the pixel grid on a window. (spec §21) */
+  toggleWindowGrid: (id: string) => void
+  /** Resize a window (px). Clamps to min size. (bonus polish) */
+  resizeWindow: (id: string, width: number, height: number) => void
 }
 
 /** Initial offset for the first imported window (relative to workspace origin). */
@@ -62,6 +83,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   mainId: null,
   zCounter: 10,
   placementCursor: { ...FIRST_OFFSET, n: 0 },
+  tool: 'move',
 
   addImages: async (files) => {
     const list = Array.from(files)
@@ -99,7 +121,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           height: Math.max(MIN_WINDOW_H, height),
           zIndex: nextZ,
           isSelected: false,
-          isBatchEnabled: true, // windows join the batch by default (spec §5)
+          isBatchEnabled: true,
+          // M3 view state (UI state, not history — spec §28)
+          zoom: 1,
+          panX: 0,
+          panY: 0,
+          fitMode: true,
+          showGrid: false,
           importedAt: Date.now(),
         }
         created.push(win)
@@ -234,6 +262,77 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       windows: s.windows.map((w) =>
         w.id === id ? { ...w, isBatchEnabled: !w.isBatchEnabled } : w,
+      ),
+    }))
+  },
+
+  setTool: (tool) => set({ tool }),
+
+  setWindowZoom: (id, zoom) => {
+    const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === id ? { ...w, zoom: z, fitMode: false } : w,
+      ),
+    }))
+  },
+
+  panWindowBy: (id, dx, dy) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === id
+          ? { ...w, panX: Math.round(w.panX + dx), panY: Math.round(w.panY + dy) }
+          : w,
+      ),
+    }))
+  },
+
+  fitWindow: (id) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === id
+          ? { ...w, fitMode: true, panX: 0, panY: 0, zoom: 1 }
+          : w,
+      ),
+    }))
+  },
+
+  resetWindowZoom100: (id) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === id
+          ? { ...w, fitMode: false, zoom: 1, panX: 0, panY: 0 }
+          : w,
+      ),
+    }))
+  },
+
+  zoomWindowBy: (id, factor) => {
+    const w = get().windows.find((x) => x.id === id)
+    if (!w) return
+    // If currently in fit mode, switch to explicit zoom anchored at 1x first.
+    const baseZoom = w.fitMode ? 1 : w.zoom
+    get().setWindowZoom(id, baseZoom * factor)
+  },
+
+  toggleWindowGrid: (id) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === id ? { ...w, showGrid: !w.showGrid } : w,
+      ),
+    }))
+  },
+
+  resizeWindow: (id, width, height) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === id
+          ? {
+              ...w,
+              width: Math.max(MIN_WINDOW_W, Math.round(width)),
+              height: Math.max(MIN_WINDOW_H, Math.round(height)),
+            }
+          : w,
       ),
     }))
   },

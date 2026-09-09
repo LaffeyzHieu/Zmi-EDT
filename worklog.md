@@ -232,3 +232,81 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M3 — Canvas / View:** render image on a canvas with zoom/pan/fit, read-only `Xem` mode. This is the foundation for M4 transforms and the canvas coordinate system (spec §9). After M3, M4 (batch transform from MAIN) becomes possible, which is the heart of the product.
 - Optional polish to fold in alongside M3: workspace window resize handles (currently windows are fixed size), and a `Di chuyển` cursor mode indicator in the sidebar.
+
+---
+
+## Milestone 3 — Canvas / View (DONE)
+
+### Current project status (assessment)
+- **M1 (Workspace):** done & stable.
+- **M2 (MAIN/Batch):** done & stable — regression-verified again this round (exclude via `B`, MAIN auto-assign, status bar counts all still correct).
+- **M3 (Canvas/View):** implemented & verified end-to-end this round.
+- **Stack unchanged.** No new deps. `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M3 scope (spec §9 coordinate system, §11 Xem, §20 Zoom/Pan, §21 Grid):**
+
+1. **Window model** (`src/lib/editor-types.ts`): added UI-state view fields per spec §28 (zoom/pan/grid are NOT document state, must NOT create history):
+   - `zoom: number` (1 = 100%), `panX/panY: number` (screen-space px), `fitMode: boolean`, `showGrid: boolean`.
+   - New bounds: `MIN_ZOOM=0.05`, `MAX_ZOOM=32`, `GRID_AUTO_THRESHOLD=8`.
+   - New `EditorTool = 'move' | 'view'` type.
+
+2. **Store** (`src/store/editor-store.ts`):
+   - New state: `tool: EditorTool` (default `'move'`).
+   - New actions: `setTool`, `setWindowZoom` (clamped, exits fit), `panWindowBy`, `fitWindow`, `resetWindowZoom100`, `zoomWindowBy` (factor), `toggleWindowGrid`, `resizeWindow`.
+   - New windows default to `fitMode: true, zoom: 1, panX/Y: 0, showGrid: false`.
+
+3. **Canvas viewport math** (`src/lib/canvas-viewport.ts`, new): `computeViewport(win, bodyW, bodyH)` returns `{displayW, displayH, offsetX, offsetY, scale}` — fit-mode centers + scales to contain; explicit-zoom uses `zoom` × natural size with `panX/panY` offset. `shouldShowGrid`, `wheelToZoomFactor` (exp stepping), `formatZoom`.
+
+4. **ImageWindow** (`src/components/editor/ImageWindow.tsx`) — rewritten image body:
+   - Image now absolutely-positioned & explicitly scaled (no more `object-contain`) so zoom/pan are exact (spec §9 pixel-perfect).
+   - **Wheel zoom anchored at cursor** (the image point under the pointer stays put) — spec §20.
+   - **Pan:** in `view` tool OR with Space held, drag the body to pan. Auto-exits fit on first pan so the motion is visible.
+   - **Viewport toolbar** (bottom-center): fit / zoom-out / zoom% / zoom-in / 1:1 / grid-toggle. Active states highlighted sky.
+   - **Pixel grid** (spec §21): auto-renders when `scale >= 8` (or user toggled); `imageRendering: pixelated` at high zoom for crisp pixels.
+   - **SE resize handle** (bonus polish): drag to resize window (clamped to min 160×120, max ~1.5× natural).
+   - **Xem mode** (spec §11): when `tool === 'view'`, title-bar drag is disabled (window stays put), body cursor = grab, a `XEM` badge appears on the title bar. Clicking a window still selects it.
+   - `bodySize` tracked via `ResizeObserver` so fit recalculates when the window is resized.
+   - **Bug fixed mid-round:** initial `if (!win || !viewport) return null` caused a chicken-and-egg (body never mounted → ResizeObserver never fired → viewport stayed null → windows vanished). Restructured to `if (!win) return null` and gate only the image/grid layers on `viewport`. Also removed a duplicate `gridOn` declaration that briefly caused a build error.
+
+5. **Sidebar** (`src/components/editor/Sidebar.tsx`):
+   - `Di chuyển` and `Xem` are now clickable tool toggles (no more `soon` badge); active state highlighted.
+   - New "active tool" hint box under the MAIN indicator: "Chế độ Xem — Chỉ xem, kéo để pan, cuộn để zoom." / "Di chuyển — Kéo title bar để di chuyển window."
+   - Footer updated to "v0.1 · Milestone 3" + shortcut hint "M · B · V · D · 0 · 1 · + - · G · Esc".
+
+6. **StatusBar** (`src/components/editor/StatusBar.tsx`): now also shows active tool (Hand/Move icon + label) and the selected window's zoom (`fit` or `NN%`).
+
+7. **EditorShell** (`src/components/editor/EditorShell.tsx`): added M3 keyboard shortcuts (spec §34, non-conflicting): `V` (Xem), `D` (Di chuyển), `0` (fit), `1` (100%), `+`/`=` (zoom in), `-`/`_` (zoom out), `G` (toggle grid). All ignore focus in form fields and modifier-held combos.
+
+**Verification (agent-browser + VLM):**
+
+| Test | Result |
+|---|---|
+| Regression M2 (import → MAIN auto, exclude via B, status counts) | ✅ |
+| 3 windows render with viewport toolbar (fit/−/zoom%/+/1:1/grid) | ✅ VLM-confirmed |
+| MAIN visuals still correct (amber ring + crown MAIN badge) | ✅ VLM-confirmed |
+| Dimension badge `512×512` bottom-right of each window | ✅ VLM-confirmed |
+| Status bar `3 windows · MAIN: claude.png · 2 in batch · Di chuyển · zoom fit` | ✅ exact |
+| Zoom keyboard `+` → 195%, `1` → 100%, `0` → fit | ✅ status bar reflects each |
+| Zoom to 745% → pixel grid auto-renders + image pixelated + grid button active | ✅ VLM-confirmed |
+| `G` toggles grid | ✅ |
+| Switch to Xem tool → status `Xem`, XEM badge on window, title drag disabled | ✅ |
+| Pan in Xem mode (synthetic pointer drag on body) → img offset changed -264→-64 | ✅ |
+| Window resize via SE handle (synthetic pointer) → 360×360 → 472×432 | ✅ |
+| M2 regression: exclude gemini via `B` → `1 in batch · 1 excluded` | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Screenshots:** `tool-results/m3-default.png`, `m3-xem-mode.png`, `m3-fixed.png`, `m3-grid.png`, `m3-final.png`.
+
+### Unresolved issues / risks
+- **agent-browser mouse-drag** still cannot drive pointer-capture gestures (wheel zoom, title drag, SE resize, body pan). Verified all via direct `PointerEvent` dispatch instead. Real mouse interactions will work for a human user.
+- **Zoom anchor math** in `onBodyWheel` mutates pan via `panWindowBy` right after `setWindowZoom` in the same handler — works correctly in practice (verified cursor-anchored zoom visually), but the two store updates batch into one render. Acceptable for M3; can be consolidated into a single `zoomAtPoint(id, newScale, anchorX, anchorY)` action if needed later.
+- **Pixel grid** draws one CSS-background line per image pixel; at extreme zoom (e.g. 32×) on large images this could be heavy, but it's GPU-composited and fine for the spec's icon-design use case.
+- **No history entries** are created by zoom/pan/grid (spec §28) — trivially satisfied since the history system lands in M9.
+- Drop-onto-window-as-layer (§4) still deferred to M5.
+
+### Priority recommendations for next phase
+- **M4 — Transform:** move/scale/rotate the selected layer/element with numeric inputs (spec §19), and the first real **batch transform from MAIN** (spec §7 batch rule, §8 action system). This is the heart of the product and the first milestone that exercises the action/history architecture. Will likely require introducing a minimal layer model (one implicit image layer per window for M4, full layer panel in M5).
+- Optional polish to fold in alongside M4: a minimap / overview of the workspace, and a "fit all windows" command.

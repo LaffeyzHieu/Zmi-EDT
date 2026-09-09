@@ -77,8 +77,10 @@ export function Sidebar() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addImages = useEditorStore((s) => s.addImages)
   const setMain = useEditorStore((s) => s.setMain)
+  const setTool = useEditorStore((s) => s.setTool)
   const selectedId = useEditorStore((s) => s.selectedWindowId)
   const mainId = useEditorStore((s) => s.mainId)
+  const tool = useEditorStore((s) => s.tool)
   const mainWindow = useEditorStore((s) =>
     s.windows.find((w) => w.id === s.mainId),
   )
@@ -147,6 +149,34 @@ export function Sidebar() {
         </div>
       </div>
 
+      {/* Active tool hint (spec §10/§11) */}
+      <div className="px-3 pt-2">
+        <div
+          className={cn(
+            'rounded-md border px-2.5 py-1.5 text-[11px] transition-colors',
+            tool === 'view'
+              ? 'border-sky-400/40 bg-sky-400/10 text-sky-200'
+              : 'border-white/10 bg-white/[0.03] text-white/55',
+          )}
+        >
+          <div className="flex items-center gap-1.5">
+            {tool === 'view' ? (
+              <Eye className="h-3 w-3 text-sky-300" />
+            ) : (
+              <Move className="h-3 w-3 text-white/55" />
+            )}
+            <span className="font-semibold uppercase tracking-wide">
+              {tool === 'view' ? 'Chế độ Xem' : 'Di chuyển'}
+            </span>
+          </div>
+          <div className="mt-0.5 leading-relaxed text-white/50">
+            {tool === 'view'
+              ? 'Chỉ xem — kéo để pan, cuộn để zoom.'
+              : 'Kéo title bar để di chuyển window.'}
+          </div>
+        </div>
+      </div>
+
       {/* Import affordance (primary action for M1) */}
       <div className="px-3 pt-3">
         <button
@@ -171,8 +201,18 @@ export function Sidebar() {
       {/* Scrollable nav */}
       <nav className="mt-3 flex-1 overflow-y-auto px-3 pb-2 [scrollbar-width:thin]">
         <NavGroup>
-          <NavItem icon={<Move className="h-4 w-4" />} label="Di chuyển" soon />
-          <NavItem icon={<Eye className="h-4 w-4" />} label="Xem" soon />
+          <NavItem
+            icon={<Move className="h-4 w-4" />}
+            label="Di chuyển"
+            active={tool === 'move'}
+            onClick={() => setTool('move')}
+          />
+          <NavItem
+            icon={<Eye className="h-4 w-4" />}
+            label="Xem"
+            active={tool === 'view'}
+            onClick={() => setTool('view')}
+          />
           <NavItem icon={<PencilLine className="h-4 w-4" />} label="Sửa" soon />
         </NavGroup>
         <Divider />
@@ -227,10 +267,10 @@ export function Sidebar() {
           </button>
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          <span>v0.1 · Milestone 2</span>
+          <span>v0.1 · Milestone 3</span>
         </div>
         <div className="mt-0.5 text-center text-[9px] text-white/20">
-          phím tắt: M · B · Esc
+          phím tắt: M · B · V · D · 0 · 1 · + - · G · Esc
         </div>
       </div>
     </aside>
