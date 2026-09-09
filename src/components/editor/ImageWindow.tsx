@@ -25,6 +25,7 @@ import { useEditorStore } from '@/store/editor-store'
 import { cn } from '@/lib/utils'
 import {
   computeViewport,
+  computeLayerPlacement,
   shouldShowGrid,
   wheelToZoomFactor,
   formatZoom,
@@ -569,25 +570,56 @@ export function ImageWindow({ id, workspaceRef }: ImageWindowProps) {
           />
         )}
 
-        {/* the image — explicitly positioned & scaled (no object-contain) */}
-        {viewport && (
-          <img
-            src={win.imageUrl}
-            alt={win.fileName}
-            draggable={false}
-            className={cn(
-              'pointer-events-none absolute select-none transition-[filter,opacity]',
-              isExcluded && 'grayscale brightness-[0.55] opacity-60',
-            )}
-            style={{
-              left: viewport.offsetX,
-              top: viewport.offsetY,
-              width: viewport.displayW,
-              height: viewport.displayH,
-              imageRendering: viewport.scale >= 8 ? 'pixelated' : 'auto',
-            }}
-          />
-        )}
+        {/* the image — placed via layer transform (spec §19) */}
+        {viewport &&
+          win.layers.map((layer) => {
+            if (!layer.visible) return null
+            const place = computeLayerPlacement(
+              win.naturalWidth,
+              win.naturalHeight,
+              layer.transform,
+              viewport,
+            )
+            const sx = place.flipX ? -1 : 1
+            const sy = place.flipY ? -1 : 1
+            const isSelectedLayer =
+              win.isSelected && layer.id === win.selectedLayerId
+            return (
+              <div
+                key={layer.id}
+                className="pointer-events-none absolute"
+                style={{
+                  left: place.left,
+                  top: place.top,
+                  width: place.width,
+                  height: place.height,
+                  transform: `rotate(${place.rotation}deg) scale(${sx}, ${sy})`,
+                  transformOrigin: 'center center',
+                }}
+              >
+                <img
+                  src={win.imageUrl}
+                  alt={layer.name}
+                  draggable={false}
+                  className={cn(
+                    'absolute inset-0 h-full w-full select-none transition-[filter,opacity]',
+                    isExcluded && 'grayscale brightness-[0.55] opacity-60',
+                  )}
+                  style={{
+                    imageRendering: viewport.scale * layer.transform.scale >= 8 ? 'pixelated' : 'auto',
+                  }}
+                />
+                {/* transform bbox outline when this layer is the active target */}
+                {isSelectedLayer && (
+                  <div
+                    className="pointer-events-none absolute inset-0 border-2 border-dashed border-sky-400/80"
+                    style={{ boxShadow: '0 0 0 1px rgba(0,0,0,0.4)' }}
+                    aria-hidden
+                  />
+                )}
+              </div>
+            )
+          })}
 
         {/* pixel grid overlay (spec §21) */}
         {gridVisible && (

@@ -310,3 +310,76 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M4 — Transform:** move/scale/rotate the selected layer/element with numeric inputs (spec §19), and the first real **batch transform from MAIN** (spec §7 batch rule, §8 action system). This is the heart of the product and the first milestone that exercises the action/history architecture. Will likely require introducing a minimal layer model (one implicit image layer per window for M4, full layer panel in M5).
 - Optional polish to fold in alongside M4: a minimap / overview of the workspace, and a "fit all windows" command.
+
+---
+
+## Milestone 4 — Transform & Batch (DONE)
+
+### Current project status (assessment)
+- **M1 Workspace:** done & stable.
+- **M2 MAIN/Batch:** done & stable (regression-verified again this round: exclude via `B`, MAIN auto-assign, status counts).
+- **M3 Canvas/View:** done & stable (regression-verified: zoom `+`→156%, `0`→fit).
+- **M4 Transform & Batch:** implemented & verified end-to-end this round.
+- **Stack unchanged.** No new deps. `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M4 scope (spec §7 MAIN batch rule, §8 batch semantics, §19 Biến đổi, §26 action system):**
+
+1. **Layer model** (`src/lib/editor-types.ts`): introduced minimal layer model. Each imported window now seeds ONE implicit `Layer` (`type: 'image'`, `identity: 'image'`) holding the source pixels. Layer carries `transform: LayerTransform` (x, y, scale, rotation, flipX, flipY). Every imported image shares `identity: 'image'` so MAIN transforms target the image layer of every batch-enabled window (spec §8 target matching). Full layer panel (add/delete/reorder/rename/text) is M5.
+
+2. **Store** (`src/store/editor-store.ts`): added `layers: Layer[]` + `selectedLayerId` to `ImageWindow`. New actions:
+   - `setLayerTransform(windowId, layerId, patch)` — local edit.
+   - `patchSelectedLayerTransform(patch)` — convenience for selected window+layer.
+   - `batchTransformFromMain(targetIdentity, absoluteTransform)` — broadcasts MAIN's CURRENT absolute transform to the matching layer in every batch-enabled window (MAIN included, where it's a no-op). Excluded windows untouched. Returns affected window ids (for M9 history).
+   - `flipSelectedLayer(axis)`.
+   - New selector `selectSelectedLayerTransform` (NOT used directly — see TransformPanel note).
+   - `addImages` now also creates the implicit image layer + sets `selectedLayerId`.
+
+3. **Canvas viewport** (`src/lib/canvas-viewport.ts`): added `computeLayerPlacement(naturalW, naturalH, transform, vp)` returning screen-space left/top/width/height/rotation/flip — used by ImageWindow to render each layer with CSS transforms (rotate + scale(flip)).
+
+4. **ImageWindow** (`src/components/editor/ImageWindow.tsx`): image rendering rewritten to map over `win.layers`, placing each via `computeLayerPlacement` with `transform: rotate(R) scale(flipX, flipY)`. The selected layer (when window is selected) gets a dashed sky bbox outline. `imageRendering: pixelated` kicks in when `vp.scale × layer.scale >= 8`.
+
+5. **TransformPanel** (`src/components/editor/TransformPanel.tsx`, new): the `Biến đổi` panel (spec §19).
+   - Numeric inputs: X, Y, W/H (read-only derived from natural × scale), Scale %, Rotation °.
+   - Flip X / Flip Y toggle buttons (active state highlighted sky).
+   - "Đặt lại (reset)" button → zero transform.
+   - **"Áp dụng batch"** amber button — enabled only when the selected window is MAIN AND batchCount > 0; shows "N cửa sổ" badge (MAIN + batchCount).
+   - AlertDialog confirmation (spec §33 destructive batch): "Áp dụng Biến đổi của MAIN (X) cho N cửa sổ (MAIN + M đang active trong batch). Các cửa sổ EXCLUDED không bị ảnh hưởng."
+   - On confirm, broadcasts MAIN's CURRENT absolute transform to all batch-enabled windows' image layer.
+   - **Performance:** subscribes via `useShallow` (zustand) — picks only primitive fields so the panel doesn't re-render every store tick. Avoids the "getSnapshot should be cached" error from the first attempt using `selectSelectedLayerTransform`.
+
+6. **Sidebar** (`src/components/editor/Sidebar.tsx`): `Sửa` is now clickable (no `soon`), sets tool to `'transform'`. When `tool === 'transform'`, renders `<TransformPanel/>` below the nav group. Active tool hint box updated for the transform tool (amber). Footer tag → "v0.1 · Milestone 4".
+
+7. **EditorShell** (`src/components/editor/EditorShell.tsx`): added M4 keyboard shortcuts (spec §34, non-conflicting): `E` (Sửa tool), `F` (flip X selected layer), `R` (rotate selected layer +15°).
+
+8. **Workspace** (`src/components/editor/Workspace.tsx`): empty-state tag → "Milestone 4 · Transform & Batch".
+
+**Verification (agent-browser + VLM):**
+
+| Test | Result |
+|---|---|
+| Regression M1+M2+M3 (import, MAIN auto, exclude, zoom, fit) | ✅ |
+| Switch to Sửa → TransformPanel renders with X/Y/W/H/Scale/Rotation + Flip X/Y + Reset + "Áp dụng batch" (N cửa sổ) | ✅ VLM-confirmed |
+| Edit MAIN X=30, Rotation=45 → image gets `rotate(45deg)` + offset | ✅ |
+| Open batch dialog → "Áp dụng Biến đổi của MAIN (claude.png) cho 4 cửa sổ (MAIN + 3 active)" | ✅ |
+| Confirm batch → 4 batch-enabled windows rotated 90°, EXCLUDED window (camera.png) NOT rotated | ✅ VLM-confirmed |
+| Status bar `5 windows · MAIN: claude.png · 3 in batch · 1 excluded` | ✅ |
+| M3 regression: zoom `+`→156%, `0`→fit | ✅ |
+| M2 regression: exclude gemini via `B` → `2 in batch · 2 excluded` | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Screenshots:** `tool-results/m4-transform-panel.png`, `m4-batch-applied.png`, `m4-final.png`.
+
+### Unresolved issues / risks
+- **Batch semantics — absolute vs delta:** M4 broadcasts MAIN's CURRENT absolute transform (not a delta). This means a per-window local edit gets overwritten when MAIN broadcasts. Spec §7 says "MAIN is the source of batch actions" and the example implies the batch result mirrors MAIN's edit — absolute broadcast matches that. The spec's Critical Mixed-History Test (§37) requires preserving per-window local edits across batch actions, which M9 (history) will handle via per-window history stacks. Acceptable for M4.
+- **`selectedLayerId` per window:** defaulted to the only layer. M5 (layer panel) will wire selection across multiple layers.
+- **No history yet:** batch transform is currently not undoable. M9 will represent each batch transform as ONE logical history action (spec §8) affecting multiple windows.
+- **agent-browser cannot drive number-input edits via keyboard** reliably; verified via direct DOM `value` setter + `input` event dispatch. Real typing will work.
+- **Drop-onto-window-as-layer** (§4) still deferred to M5.
+- **Width/Height inputs** are read-only display (derived from natural × scale) — the authoritative numeric is Scale, since the implicit image layer's pixel size equals the source natural size. M5 (full layer model with text layers of arbitrary size) will make W/H editable.
+
+### Priority recommendations for next phase
+- **M5 — Layers:** full layer panel (spec §17) — list, select, hide/show, reorder, rename, delete. Add text layer type (preview for M7). Drop-onto-window-as-layer (§4) can finally land here. This unlocks the full layer model that M4's transforms already operate on.
+- Optional polish to fold in alongside M5: drag-to-move the selected layer directly on the canvas (mouse drag updates X/Y per spec §19 "Mouse dragging should update these values"), and a layer thumbnail in the panel.

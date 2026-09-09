@@ -11,11 +11,10 @@ import { useEditorStore } from '@/store/editor-store'
  * The status bar sits at the bottom (sticky-footer rule) and the workspace
  * fills all remaining space.
  *
- * M2 keyboard shortcuts (spec §34): M (set MAIN), B (toggle batch), Esc (deselect).
- * M3 additions (spec §20/§21): V (Xem tool), D (Di chuyển tool),
- *   0 (fit), 1 (100%), +/= (zoom in), -/_ (zoom out), G (toggle grid).
- * All shortcuts ignore focus inside input/textarea/select/contenteditable
- * and any modifier-held combos.
+ * M2 shortcuts (spec §34): M (set MAIN), B (toggle batch), Esc (deselect).
+ * M3: V (Xem), D (Di chuyển), 0 (fit), 1 (100%), +/= (zoom in), -/_ (zoom out), G (grid).
+ * M4: E (Sửa/Biến đổi tool), F (flip X selected layer), R (rotate selected +15°).
+ * All ignore focus inside input/textarea/select/contenteditable and modifier-held combos.
  */
 export function EditorShell() {
   useEffect(() => {
@@ -46,6 +45,8 @@ export function EditorShell() {
         s.setTool('view')
       } else if (k === 'd') {
         s.setTool('move')
+      } else if (k === 'e') {
+        s.setTool('transform')
       } else if (k === '0') {
         if (sel) s.fitWindow(sel)
       } else if (k === '1') {
@@ -56,6 +57,18 @@ export function EditorShell() {
         if (sel) s.zoomWindowBy(sel, 1 / 1.25)
       } else if (k === 'g') {
         if (sel) s.toggleWindowGrid(sel)
+      } else if (k === 'f') {
+        s.flipSelectedLayer('x')
+      } else if (k === 'r') {
+        const w = s.windows.find((x) => x.id === sel)
+        if (w && w.selectedLayerId) {
+          const layer = w.layers.find((l) => l.id === w.selectedLayerId)
+          if (layer) {
+            let r = (layer.transform.rotation + 15) % 360
+            if (r > 180) r -= 360
+            s.setLayerTransform(sel, layer.id, { rotation: r })
+          }
+        }
       } else if (e.key === 'Escape') {
         if (s.selectedWindowId) s.selectWindow(null)
       }

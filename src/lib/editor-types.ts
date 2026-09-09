@@ -32,8 +32,50 @@ export const SUPPORTED_IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp']
  *   `fitMode`  — when true, the image auto-fits the window (zoom is ignored).
  *   `showGrid` — pixel grid visibility (auto-shown when very zoomed in).
  *
- *   `layers`, `history` remain absent → M5 (layers) / M9 (history).
+ * Milestone 4 additions (document state — these WILL participate in history):
+ *   `layers`   — ordered list of layers. For M4 each imported window has one
+ *                implicit "Image" layer holding the source pixels; the layer
+ *                carries the transform (x/y/scale/rotation/flip) that Biến đổi
+ *                edits. Full layer panel (add/delete/reorder/rename) is M5.
+ *
+ *   `history` remains absent → M9.
  */
+export interface Layer {
+  /** Stable internal layer ID (UUID). Used for batch target matching (spec §8). */
+  id: string
+  /** Display name. For the implicit image layer, the source filename. */
+  name: string
+  /** Layer type. M4 only has 'image' (the source pixels). M5+ adds 'text'. */
+  type: 'image' | 'text'
+  /** Whether the layer is visible (eye toggle). M5 wires the panel; M4 keeps true. */
+  visible: boolean
+  /** Transform of the layer inside the document (spec §19). */
+  transform: LayerTransform
+  /**
+   * Stable batch identity — used to match the "same" layer across documents
+   * when broadcasting batch actions (spec §8 target matching). For M4 every
+   * imported image layer shares `identity = 'image'` so a MAIN transform
+   * applies to the image layer of every batch-enabled window.
+   */
+  identity: string
+}
+
+/** Document-space transform of a layer (spec §9, §19). */
+export interface LayerTransform {
+  /** Document X (px) of the layer's top-left, before scaling. */
+  x: number
+  /** Document Y (px) of the layer's top-left, before scaling. */
+  y: number
+  /** Scale multiplier (1 = natural size). */
+  scale: number
+  /** Rotation in degrees, clockwise, around the layer center. */
+  rotation: number
+  /** Flip horizontally. */
+  flipX: boolean
+  /** Flip vertically. */
+  flipY: boolean
+}
+
 export interface ImageWindow {
   /** Stable internal ID (UUID). Never the filename. */
   id: string
@@ -66,6 +108,13 @@ export interface ImageWindow {
   fitMode: boolean
   /** Pixel grid visibility (spec §21). */
   showGrid: boolean
+  /**
+   * Ordered layer list. Index 0 = bottom. M4 seeds one implicit image layer.
+   * `selectedLayerId` points to the active editing target (defaults to the
+   * only layer).
+   */
+  layers: Layer[]
+  selectedLayerId: string | null
   /** Unix ms of import — used for stable cascading placement. */
   importedAt: number
 }
@@ -80,5 +129,10 @@ export const MAX_ZOOM = 32
 /** When `zoom` (or fit-scale) exceeds this, the pixel grid auto-appears (§21). */
 export const GRID_AUTO_THRESHOLD = 8
 
-/** The active sidebar tool (spec §10 Di chuyển, §11 Xem). UI state, not history. */
-export type EditorTool = 'move' | 'view'
+/** The active sidebar tool (spec §10 Di chuyển, §11 Xem, §12 Sửa→Biến đổi). UI state. */
+export type EditorTool = 'move' | 'view' | 'transform'
+
+/** Default transform for a freshly imported image layer. */
+export function defaultTransform(): LayerTransform {
+  return { x: 0, y: 0, scale: 1, rotation: 0, flipX: false, flipY: false }
+}

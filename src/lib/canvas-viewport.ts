@@ -1,27 +1,28 @@
 // Zmi EDT — canvas viewport math (spec §9 coordinate system, §20 zoom/pan)
-import { GRID_AUTO_THRESHOLD, type ImageWindow } from '@/lib/editor-types'
+import {
+  GRID_AUTO_THRESHOLD,
+  type ImageWindow,
+  type LayerTransform,
+} from '@/lib/editor-types'
 
 export interface Viewport {
-  /** Displayed image width in screen px. */
+  /** Displayed document width in screen px (= natural width × fit-scale). */
   displayW: number
-  /** Displayed image height in screen px. */
+  /** Displayed document height in screen px. */
   displayH: number
-  /** Top-left of the image inside the window body (screen px, body-relative). */
+  /** Top-left of the document inside the window body (screen px, body-relative). */
   offsetX: number
-  /** Top-left of the image inside the window body (screen px, body-relative). */
+  /** Top-left of the document inside the window body (screen px, body-relative). */
   offsetY: number
-  /** Effective scale: 1 means 1 image px = 1 screen px. */
+  /** Effective scale: 1 means 1 document px = 1 screen px. */
   scale: number
 }
 
 /**
- * Compute the in-window image layout.
- *
- * Layout model:
- *   - In `fitMode`, the image is centered and scaled to fit inside the body
- *     while preserving aspect ratio.
- *   - Otherwise, scale = `zoom` (1 = 100%), and the image is centered with
- *     `panX/panY` applied as a screen-space offset.
+ * Compute the in-window document layout (the canvas onto which layers are
+ * placed). The document size equals the source image's natural size; the
+ * viewport scales that to fit the window body (fit mode) or to `zoom` (1=100%)
+ * with `panX/panY` applied as a screen-space offset.
  */
 export function computeViewport(
   w: ImageWindow,
@@ -55,6 +56,51 @@ export function computeViewport(
     offsetX: (safeW - displayW) / 2 + w.panX,
     offsetY: (safeH - displayH) / 2 + w.panY,
     scale,
+  }
+}
+
+/**
+ * A layer's placement on screen, derived from its document transform + the
+ * window viewport. Used to render the layer with CSS transforms.
+ */
+export interface LayerPlacement {
+  /** Screen-space left of the layer box (body-relative, pre-transform). */
+  left: number
+  /** Screen-space top of the layer box (body-relative, pre-transform). */
+  top: number
+  /** Screen-space width of the layer box (natural × transform.scale × vp.scale). */
+  width: number
+  /** Screen-space height of the layer box. */
+  height: number
+  /** Rotation in degrees (passed through from layer.transform.rotation). */
+  rotation: number
+  /** Flip horizontal (passed through). */
+  flipX: boolean
+  /** Flip vertical (passed through). */
+  flipY: boolean
+}
+
+/**
+ * Convert a layer's document transform into a screen-space placement.
+ *
+ * Layer coords: the layer's top-left in document space is (x, y) with size
+ * (naturalW × scale, naturalH × scale). We multiply everything by `vp.scale`
+ * to get screen px and add `vp.offsetX/Y`.
+ */
+export function computeLayerPlacement(
+  layerNaturalW: number,
+  layerNaturalH: number,
+  transform: LayerTransform,
+  vp: Viewport,
+): LayerPlacement {
+  return {
+    left: vp.offsetX + transform.x * vp.scale,
+    top: vp.offsetY + transform.y * vp.scale,
+    width: layerNaturalW * transform.scale * vp.scale,
+    height: layerNaturalH * transform.scale * vp.scale,
+    rotation: transform.rotation,
+    flipX: transform.flipX,
+    flipY: transform.flipY,
   }
 }
 

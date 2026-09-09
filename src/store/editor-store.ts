@@ -5,12 +5,15 @@ import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
 import {
   type ImageWindow,
+  type Layer,
+  type LayerTransform,
   type EditorTool,
   MIN_WINDOW_W,
   MIN_WINDOW_H,
   MAX_DISPLAY_W,
   MIN_ZOOM,
   MAX_ZOOM,
+  defaultTransform,
 } from '@/lib/editor-types'
 import {
   isSupportedImage,
@@ -68,6 +71,31 @@ interface EditorState {
   toggleWindowGrid: (id: string) => void
   /** Resize a window (px). Clamps to min size. (bonus polish) */
   resizeWindow: (id: string, width: number, height: number) => void
+
+  // ---- M4: transform (spec §19) — document state, will participate in history (M9) ----
+  /** Update the transform of the selected layer in a window (local, not batch). */
+  setLayerTransform: (windowId: string, layerId: string, patch: Partial<LayerTransform>) => void
+  /** Patch the selected layer's transform in the selected window. Convenience. */
+  patchSelectedLayerTransform: (patch: Partial<LayerTransform>) => void
+  /**
+   * Batch transform from MAIN (spec §7 batch rule, §8 action system).
+   * Copies MAIN's selected layer's CURRENT transform to the layer with
+   * matching `targetIdentity` in every batch-enabled window (MAIN included,
+   * where it's a no-op since the source IS MAIN). Excluded windows are NOT
+   * touched. Returns the list of affected window ids.
+   *
+   * NOTE: We broadcast the ABSOLUTE transform (not a delta). This keeps
+   * per-window local edits out of the broadcast — windows that previously had
+   * a different local transform are overwritten to match MAIN, which matches
+   * the spec's "MAIN is the source of batch actions" rule. M9 (history) will
+   * make this undoable.
+   */
+  batchTransformFromMain: (
+    targetIdentity: string,
+    absoluteTransform: LayerTransform,
+  ) => string[]
+  /** Flip the selected layer on X or Y (local; also available as batch). */
+  flipSelectedLayer: (axis: 'x' | 'y') => void
 }
 
 /** Initial offset for the first imported window (relative to workspace origin). */
@@ -128,8 +156,24 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           panY: 0,
           fitMode: true,
           showGrid: false,
+          // M4 document state: one implicit image layer holding source pixels.
+          // Every imported image shares identity='image' so MAIN transforms
+          // broadcast to the image layer of every batch-enabled window (§8).
+          layers: [
+            {
+              id: uuid(),
+              name: file.name || `image-${id.slice(0, 6)}.png`,
+              type: 'image',
+              visible: true,
+              transform: defaultTransform(),
+              identity: 'image',
+            } satisfies Layer,
+          ],
+          selectedLayerId: null,
           importedAt: Date.now(),
         }
+        // default selection = the only layer
+        win.selectedLayerId = win.layers[0].id
         created.push(win)
         if (!firstCreatedId) firstCreatedId = id
 
@@ -336,7 +380,79 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     }))
   },
+
+  setLayerTransform: (windowId, layerId, patch) => {
+    set((s) => ({
+      windows: s.windows.map((w) =>
+        w.id === windowId
+          ? {
+              ...w,
+              layers: w.layers.map((l) =>
+                l.id === layerId
+                  ? { ...l, transform: { ...l.transform, ...patch } }
+                  : l,
+              ),
+            }
+          : w,
+      ),
+    }))
+  },
+
+  patchSelectedLayerTransform: (patch) => {
+    const sel = get().selectedWindowId
+    if (!sel) return
+    const w = get().windows.find((x) => x.id === sel)
+    if (!w || !w.selectedLayerId) return
+    get().setLayerTransform(sel, w.selectedLayerId, patch)
+  },
+
+  batchTransformFromMain: (targetIdentity, absoluteTransform) => {
+    const mainId = get().mainId
+    if (!mainId) return []
+    // Eligible windows: MAIN + all non-MAIN batch-enabled windows (spec §7).
+    const affected: string[] = []
+    set((s) => ({
+      windows: s.windows.map((w) => {
+        const eligible = w.id === mainId || w.isBatchEnabled
+        if (!eligible) return w
+        // Find the layer with matching identity (spec §8 target matching).
+        const layer = w.layers.find((l) => l.identity === targetIdentity)
+        if (!layer) return w // no match → leave unchanged (§8: do not modify unrelated)
+        affected.push(w.id)
+        return {
+          ...w,
+          layers: w.layers.map((l) =>
+            l.id === layer.id
+              ? { ...l, transform: { ...absoluteTransform } }
+              : l,
+          ),
+        }
+      }),
+    }))
+    return affected
+  },
+
+  flipSelectedLayer: (axis) => {
+    const sel = get().selectedWindowId
+    if (!sel) return
+    const w = get().windows.find((x) => x.id === sel)
+    if (!w || !w.selectedLayerId) return
+    const layer = w.layers.find((l) => l.id === w.selectedLayerId)
+    if (!layer) return
+    const patch =
+      axis === 'x' ? { flipX: !layer.transform.flipX } : { flipY: !layer.transform.flipY }
+    get().setLayerTransform(sel, layer.id, patch)
+  },
 }))
+
+// ---- M4 selectors ----
+/** The transform of the selected layer in the selected window (for the Transform panel). */
+export const selectSelectedLayerTransform = (s: EditorState) => {
+  const w = s.windows.find((x) => x.id === s.selectedWindowId)
+  if (!w || !w.selectedLayerId) return null
+  const layer = w.layers.find((l) => l.id === w.selectedLayerId)
+  return layer ? { layer, transform: layer.transform, window: w } : null
+}
 
 // ---- selectors ----
 export const selectWindowCount = (s: EditorState) => s.windows.length

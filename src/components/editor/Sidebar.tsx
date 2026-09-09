@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useEditorStore } from '@/store/editor-store'
 import { cn } from '@/lib/utils'
+import { TransformPanel } from './TransformPanel'
 
 /**
  * Sidebar — black navigation panel (matches the `ZmiEDT (1).png` mockup).
@@ -149,30 +150,40 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Active tool hint (spec §10/§11) */}
+      {/* Active tool hint (spec §10/§11/§19) */}
       <div className="px-3 pt-2">
         <div
           className={cn(
             'rounded-md border px-2.5 py-1.5 text-[11px] transition-colors',
             tool === 'view'
               ? 'border-sky-400/40 bg-sky-400/10 text-sky-200'
-              : 'border-white/10 bg-white/[0.03] text-white/55',
+              : tool === 'transform'
+                ? 'border-amber-400/40 bg-amber-400/10 text-amber-200'
+                : 'border-white/10 bg-white/[0.03] text-white/55',
           )}
         >
           <div className="flex items-center gap-1.5">
             {tool === 'view' ? (
               <Eye className="h-3 w-3 text-sky-300" />
+            ) : tool === 'transform' ? (
+              <PencilLine className="h-3 w-3 text-amber-300" />
             ) : (
               <Move className="h-3 w-3 text-white/55" />
             )}
             <span className="font-semibold uppercase tracking-wide">
-              {tool === 'view' ? 'Chế độ Xem' : 'Di chuyển'}
+              {tool === 'view'
+                ? 'Chế độ Xem'
+                : tool === 'transform'
+                  ? 'Biến đổi'
+                  : 'Di chuyển'}
             </span>
           </div>
           <div className="mt-0.5 leading-relaxed text-white/50">
             {tool === 'view'
               ? 'Chỉ xem — kéo để pan, cuộn để zoom.'
-              : 'Kéo title bar để di chuyển window.'}
+              : tool === 'transform'
+                ? 'Sửa layer đã chọn. MAIN → Áp dụng batch.'
+                : 'Kéo title bar để di chuyển window.'}
           </div>
         </div>
       </div>
@@ -213,8 +224,17 @@ export function Sidebar() {
             active={tool === 'view'}
             onClick={() => setTool('view')}
           />
-          <NavItem icon={<PencilLine className="h-4 w-4" />} label="Sửa" soon />
+          <NavItem
+            icon={<PencilLine className="h-4 w-4" />}
+            label="Sửa"
+            active={tool === 'transform'}
+            onClick={() => setTool('transform')}
+          />
         </NavGroup>
+
+        {/* M4: Biến đổi panel — only shown when the Sửa tool is active */}
+        {tool === 'transform' && <TransformPanel />}
+
         <Divider />
         <NavGroup>
           <NavItem icon={<Brush className="h-4 w-4" />} label="Vẽ" soon />
@@ -267,10 +287,10 @@ export function Sidebar() {
           </button>
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          <span>v0.1 · Milestone 3</span>
+          <span>v0.1 · Milestone 4</span>
         </div>
         <div className="mt-0.5 text-center text-[9px] text-white/20">
-          phím tắt: M · B · V · D · 0 · 1 · + - · G · Esc
+          phím tắt: M · B · V · D · E · 0 1 + - · G · F · R · Esc
         </div>
       </div>
     </aside>
