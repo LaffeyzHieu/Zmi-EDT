@@ -16,8 +16,8 @@ import { useEditorStore } from '@/store/editor-store'
  * M4: E (Sửa/Biến đổi tool), F (flip X selected layer), R (rotate selected +15°).
  * M5: L (toggle Layers panel via a custom window event the Sidebar listens to).
  * M6: P (Vẽ tool), [ (brush smaller), ] (brush larger), Ctrl+Z (undo last stroke).
- * M7: T (Text tool).
- * M8: C (Cắt ảnh/Crop tool), X (Xóa/Delete tool), Delete key (delete selected layer).
+ * M9: History (undo/redo) via Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y.
+ * M10: S (toggle Tải về / Export panel).
  * All ignore focus inside input/textarea/select/contenteditable — EXCEPT
  * Ctrl+Z which is also allowed there (so undo works while editing a layer name).
  */
@@ -79,6 +79,9 @@ export function EditorShell() {
       } else if (k === 'l') {
         // Toggle the Layers panel via a window event the Sidebar subscribes to.
         window.dispatchEvent(new CustomEvent('zmi:toggle-layers'))
+      } else if (k === 's') {
+        // Toggle the Export panel via a window event the Sidebar subscribes to.
+        window.dispatchEvent(new CustomEvent('zmi:toggle-export'))
       } else if (k === '[') {
         s.setBrushSize(s.brushSize - 2)
       } else if (k === ']') {

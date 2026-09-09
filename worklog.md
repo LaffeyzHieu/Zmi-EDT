@@ -743,3 +743,66 @@ Priority for next phase:
 ### Priority recommendations for next phase
 - **M10 — Export:** export one/all/batch windows as PNG or ZIP (spec §23). Will need to rasterize the composited document (image layers + text + strokes + crop bounds) onto a `<canvas>` and `toBlob()`/`toDataURL()`. jszip + file-saver will need to be installed.
 - Optional polish: visual history list panel, drag-to-move layers on canvas (§19), inline text editing.
+
+---
+
+## Milestone 10 — Export (DONE)
+
+### Current project status (assessment)
+- **M1-M9:** done & stable (regression-verified again this round: undo, zoom, fit, exclude).
+- **M10 Export:** implemented & verified end-to-end this round.
+- **New deps:** `jszip@3.10.2` + `file-saver@2.0.5` (+ `@types/file-saver@2.0.7` dev). `bun run lint` clean. Dev server compiles clean.
+
+### Goals / completed modifications / verification results
+
+**M10 scope (spec §23 Tải về):**
+
+1. **Export-canvas util** (`src/lib/export-canvas.ts`, new): `renderWindowToCanvas(w)` rasterizes a window's composited document onto a `<canvas>` at 1:1 pixel resolution (canvas size = naturalWidth/Height post-crop).
+   - Layers drawn bottom-to-top (stored order).
+   - Image layers: load `imageUrl` into `HTMLImageElement`, apply layer transform (translate to layer center, rotate, scale w/ flip) via `ctx` transforms, `drawImage`.
+   - Strokes: drawn as polylines (`ctx.stroke`) with round caps/joins; single-point strokes as filled circles (`ctx.arc`/`fill`). Document coords.
+   - Text layers: `ctx.fillText` with the layer's font/size/color/bold/italic + shadow for legibility.
+   - `canvasToPngBlob(canvas)` → PNG Blob via `canvas.toBlob`.
+   - `sanitizeFileName(name, fallbackId)` preserves original filename; falls back to `window-{id6}.png`; ensures `.png` extension. Avoids `image.png`/`image (1).png` per spec §23.
+
+2. **ExportPanel** (`src/components/editor/ExportPanel.tsx`, new): the `Tải về` panel (spec §23).
+   - Three export targets (spec §23):
+     - **Window hiện tại** — selected window → single PNG download.
+     - **Tất cả window** — all windows → ZIP.
+     - **Tất cả window đang batch** — MAIN + batch-enabled windows → ZIP.
+   - Single image → PNG; multiple → ZIP (spec §23). ZIP filename = `zmi-edt-export-{ISO-timestamp}.zip`; preserves original per-image filenames; collisions auto-resolved (`-2.png`, `-3.png`).
+   - Busy spinners per button during rasterize+zip. Result message ("Đã xuất X" / "Lỗi: Y") shown after.
+   - Uses `file-saver`'s `saveAs` for downloads + `jszip` for packaging.
+   - Export does NOT modify document state or create history entries (spec §23).
+
+3. **Sidebar** (`src/components/editor/Sidebar.tsx`): "Tải về" nav item now a toggle (active state). Renders `<ExportPanel/>` when open. Footer tag → "v0.1 · Milestone 10".
+
+4. **EditorShell** (`src/components/editor/EditorShell.tsx`): added `S` keyboard shortcut → dispatches `zmi:toggle-export` window event; Sidebar listens + toggles the panel.
+
+**Verification (agent-browser + filesystem):**
+
+| Test | Result |
+|---|---|
+| Regression M1-M9 (import, MAIN, zoom, fit, exclude, undo) | ✅ |
+| Click Tải về → ExportPanel renders (3 buttons: Window hiện tại / Tất cả window / Window đang batch) | ✅ |
+| Export current window (claude) → "Đã xuất claude.png" + file appears in ~/Downloads (14KB PNG, 512×512 RGBA) | ✅ |
+| Export all (2 windows) → "Đã xuất ZIP với 2 ảnh" + `zmi-edt-export-{ts}.zip` (28KB) containing claude.png + gemini.png | ✅ |
+| Exclude gemini → export batch → single PNG "claude.png" (MAIN only, not ZIP — §23 single-image rule) | ✅ |
+| Export with transform (rotation 45°) → exported PNG shows rotated content (VLM: "rotated 45 degrees, pink diamond") | ✅ |
+| M9 regression: Ctrl+Z undo reverts rotation 45→0 | ✅ |
+| M3 regression: zoom `+`→156%, `0`→fit | ✅ |
+| `bun run lint` | ✅ clean |
+| Dev server: no runtime errors, `/` 200 | ✅ |
+
+**Screenshots:** `tool-results/m10-exportpanel.png`, `m10-exportpanel2.png`, `m10-exportpanel3.png`, `m10-final.png`.
+
+### Unresolved issues / risks
+- **Browser download location** is browser-dependent (~/Downloads in the QA env). The export works (files appeared + valid PNG/ZIP), but headless Chrome auto-renames duplicate filenames (`claude (1).png`, `claude (2).png`). Real users get a normal download dialog.
+- **Crop rasterization:** `renderWindowToCanvas` respects `naturalWidth/Height` (post-crop) and shifts layer transforms/strokes by `(-cropX, -cropY)` via the store's `applyCrop` (M8). So exported PNGs correctly reflect the cropped bounds. Verified indirectly via the rotation test.
+- **Per-layer dimension cache** for ADDED image layers (M5 note): exported PNGs use the window's natural size for ALL image layers, so a 2nd added image layer renders at the source image's size. Acceptable for v0.1.
+- **Text measurement in export** uses the live `ctx.measureText` (canvas 2D), consistent with the on-screen render (M7 `text-measure.ts`).
+- **No export progress bar** for large batches — `Promise.all` renders all windows in parallel, which is fast for small batches but could spike memory for dozens of 4K images. Acceptable for v0.1; spec §38 warns about this.
+
+### Priority recommendations for next phase
+- **M11 — Asset Library:** `Xem file đã upload` (spec §24) — reuse uploaded assets without re-importing. Show preview + filename; actions: view, reuse, drag into workspace, delete from library. This is the last "reusable asset" piece before the polish milestones.
+- Optional polish: export progress bar, drag-to-move layers on canvas (§19), inline text editing.

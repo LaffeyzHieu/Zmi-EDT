@@ -27,6 +27,7 @@ import { DrawPanel } from './DrawPanel'
 import { TextPanel } from './TextPanel'
 import { DeletePanel } from './DeletePanel'
 import { CropPanel } from './CropPanel'
+import { ExportPanel } from './ExportPanel'
 
 /**
  * Sidebar — black navigation panel (matches the `ZmiEDT (1).png` mockup).
@@ -83,6 +84,7 @@ function Divider() {
 export function Sidebar() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [layersOpen, setLayersOpen] = useState(true)
+  const [exportOpen, setExportOpen] = useState(false)
   const addImages = useEditorStore((s) => s.addImages)
   const setMain = useEditorStore((s) => s.setMain)
   const setTool = useEditorStore((s) => s.setTool)
@@ -110,11 +112,16 @@ export function Sidebar() {
   const undo = useEditorStore((s) => s.undo)
   const redo = useEditorStore((s) => s.redo)
 
-  // Listen for the keyboard-shortcut event (L) dispatched by EditorShell.
+  // Listen for the keyboard-shortcut events (L, S) dispatched by EditorShell.
   useEffect(() => {
-    const onToggle = () => setLayersOpen((v) => !v)
-    window.addEventListener('zmi:toggle-layers', onToggle)
-    return () => window.removeEventListener('zmi:toggle-layers', onToggle)
+    const onToggleLayers = () => setLayersOpen((v) => !v)
+    const onToggleExport = () => setExportOpen((v) => !v)
+    window.addEventListener('zmi:toggle-layers', onToggleLayers)
+    window.addEventListener('zmi:toggle-export', onToggleExport)
+    return () => {
+      window.removeEventListener('zmi:toggle-layers', onToggleLayers)
+      window.removeEventListener('zmi:toggle-export', onToggleExport)
+    }
   }, [])
 
   const openPicker = () => fileInputRef.current?.click()
@@ -358,13 +365,21 @@ export function Sidebar() {
             active={mainActionActive}
             onClick={hasWindows ? handleChooseMain : undefined}
           />
-          <NavItem icon={<Download className="h-4 w-4" />} label="Tải về" soon />
+          <NavItem
+            icon={<Download className="h-4 w-4" />}
+            label="Tải về"
+            active={exportOpen}
+            onClick={() => setExportOpen((v) => !v)}
+          />
           <NavItem
             icon={<FolderOpen className="h-4 w-4" />}
             label="Xem file đã upload"
             soon
           />
         </NavGroup>
+
+        {/* M10: Export panel — toggle via the Tải về nav item */}
+        {exportOpen && <ExportPanel />}
       </nav>
 
       {/* Footer: Undo / Redo (M9) */}
@@ -402,10 +417,10 @@ export function Sidebar() {
           </button>
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[10px] uppercase tracking-[0.18em] text-white/30">
-          <span>v0.1 · Milestone 9</span>
+          <span>v0.1 · Milestone 10</span>
         </div>
         <div className="mt-0.5 text-center text-[9px] text-white/20">
-          phím tắt: M · B · V · D · E · T · P · C · X · L · 0 1 + - · G · F · R · [ ] · Del · Ctrl+Z/Y · Esc
+          phím tắt: M · B · V · D · E · T · P · C · X · L · S · 0 1 + - · G · F · R · [ ] · Del · Ctrl+Z/Y · Esc
         </div>
       </div>
     </aside>
