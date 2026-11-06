@@ -114,7 +114,7 @@ export function EditorShell() {
           if (layer) {
             let r = (layer.transform.rotation + 15) % 360
             if (r > 180) r -= 360
-            s.setLayerTransform(sel, layer.id, { rotation: r })
+            s.setLayerTransform(w.id, layer.id, { rotation: r })
           }
         }
       } else if (e.key === 'Escape') {

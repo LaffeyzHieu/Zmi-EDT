@@ -46,7 +46,7 @@ import {
 
 interface ImageWindowProps {
   id: string
-  workspaceRef: React.RefObject<HTMLDivElement>
+  workspaceRef: React.RefObject<HTMLDivElement | null>
 }
 
 type DragKind = 'move' | 'pan' | 'resize-se' | null
